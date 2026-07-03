@@ -147,6 +147,16 @@ fn build_guidance_map() -> HashMap<String, ErrorGuidance> {
         ),
     );
 
+    // users_not_found (users.lookupByEmail)
+    map.insert(
+        "users_not_found".to_string(),
+        ErrorGuidance::new(
+            "users_not_found",
+            "No workspace user matches the requested email address",
+            "Check the email address for typos and confirm the user belongs to this workspace (and the correct --profile)",
+        ),
+    );
+
     map
 }
 

@@ -103,6 +103,11 @@ async fn main() {
                     handle_command_error(&e.to_string(), "Conv history failed");
                 }
             }
+            ConvCommand::Open(open_args) => {
+                if let Err(e) = cli::run_conv_open(open_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Conv open failed");
+                }
+            }
         },
         Command::Thread { command } => match command {
             ThreadCommand::Get(get_args) => {
@@ -115,6 +120,11 @@ async fn main() {
             UsersCommand::Info(info_args) => {
                 if let Err(e) = cli::run_users_info(info_args, &globals).await {
                     handle_command_error(&e.to_string(), "Users info failed");
+                }
+            }
+            UsersCommand::Lookup(lookup_args) => {
+                if let Err(e) = cli::run_users_lookup(lookup_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Users lookup failed");
                 }
             }
             UsersCommand::CacheUpdate(update_args) => {

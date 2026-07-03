@@ -40,6 +40,26 @@ pub struct CommandMeta {
     pub idempotency_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationMeta>,
+}
+
+/// Pagination metadata for commands that page through Slack results.
+///
+/// `next_cursor` (cursor-based APIs) or `next_page` (page-based APIs, e.g.
+/// search.messages) is present only when more results remain — i.e. the
+/// output was truncated by the page limit (`--max-pages`) or because `--all`
+/// was not requested.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginationMeta {
+    /// Number of pages fetched from the Slack API
+    pub pages_fetched: u32,
+    /// Cursor to resume from when results were truncated (cursor-based APIs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Page number to resume from when results were truncated (page-based APIs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page: Option<u32>,
 }
 
 impl CommandResponse {
@@ -76,6 +96,7 @@ impl CommandResponse {
                 token_type: None,
                 idempotency_key: None,
                 idempotency_status: None,
+                pagination: None,
             },
         }
     }
@@ -114,6 +135,7 @@ impl CommandResponse {
                 token_type,
                 idempotency_key: None,
                 idempotency_status: None,
+                pagination: None,
             },
         }
     }
@@ -122,6 +144,12 @@ impl CommandResponse {
     pub fn with_idempotency(mut self, key: String, status: String) -> Self {
         self.meta.idempotency_key = Some(key);
         self.meta.idempotency_status = Some(status);
+        self
+    }
+
+    /// Set pagination metadata
+    pub fn with_pagination(mut self, pagination: PaginationMeta) -> Self {
+        self.meta.pagination = Some(pagination);
         self
     }
 }

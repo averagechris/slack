@@ -1,31 +1,19 @@
 //! Thread operations - retrieve thread messages
 
-use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse};
+use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse, PaginationMeta};
+use crate::commands::paging::{paginate_messages, PageOptions};
 use serde_json::json;
 use std::collections::HashMap;
 
-/// Maximum pages to fetch to prevent infinite loops
-const MAX_PAGES: usize = 1000;
+/// Page cap used by the legacy full-pagination [`thread_get`] wrapper
+/// (guards against infinite loops, matching the pre-`--all` behavior).
+const LEGACY_MAX_PAGES: u32 = 1000;
 
-/// Get thread messages (conversation replies) with automatic pagination
+/// Get thread messages (conversation replies), following all pages
 ///
-/// # Arguments
-/// * `client` - API client
-/// * `channel` - Channel ID containing the thread
-/// * `thread_ts` - Timestamp of the parent message (thread identifier)
-/// * `limit` - Optional number of messages per page (default: 100)
-/// * `inclusive` - Optional flag to include the parent message (default: false)
-///
-/// # Returns
-/// * `Ok(ApiResponse)` with all thread messages aggregated
-/// * `Err(ApiError)` if the operation fails
-///
-/// # Pagination
-/// This function automatically follows `next_cursor` to retrieve all pages and aggregates
-/// the `messages` array from all responses into a single response.
-/// It prevents infinite loops by:
-/// - Tracking seen cursors (duplicate detection)
-/// - Limiting max pages to MAX_PAGES
+/// Legacy library entry point that aggregates every page (up to an internal
+/// safety cap). The CLI `thread get` command uses [`thread_get_paged`] with
+/// explicit `--cursor` / `--all` / `--max-pages` control instead.
 pub async fn thread_get(
     client: &ApiClient,
     channel: String,
@@ -33,80 +21,54 @@ pub async fn thread_get(
     limit: Option<u32>,
     inclusive: Option<bool>,
 ) -> Result<ApiResponse, ApiError> {
-    let mut all_messages = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut ok = true;
-    let mut error: Option<String> = None;
-    let mut page_count = 0;
+    let paging = PageOptions {
+        cursor: None,
+        all: true,
+        max_pages: LEGACY_MAX_PAGES,
+    };
+    let (response, _) =
+        thread_get_paged(client, channel, thread_ts, limit, inclusive, &paging).await?;
+    Ok(response)
+}
 
-    loop {
-        // Prevent infinite loops
-        page_count += 1;
-        if page_count > MAX_PAGES {
-            return Err(ApiError::SlackError(format!(
-                "Pagination exceeded max pages ({}), possible infinite loop",
-                MAX_PAGES
-            )));
-        }
+/// Get thread messages (conversation replies) with explicit pagination control
+///
+/// # Arguments
+/// * `client` - API client
+/// * `channel` - Channel ID containing the thread
+/// * `thread_ts` - Timestamp of the parent message (thread identifier)
+/// * `limit` - Optional number of messages per page (default: 100)
+/// * `inclusive` - Optional flag to include the parent message (default: false)
+/// * `paging` - Cursor/`--all`/`--max-pages` pagination options
+///
+/// # Pagination
+/// Fetches a single page by default (starting from `paging.cursor` when
+/// set). With `paging.all`, follows `next_cursor` until exhausted or the
+/// `paging.max_pages` safety cap is reached, aggregating the `messages`
+/// array. 429 responses are retried by the client. The returned
+/// [`PaginationMeta`] reports pages fetched and the resume cursor when
+/// results were truncated.
+pub async fn thread_get_paged(
+    client: &ApiClient,
+    channel: String,
+    thread_ts: String,
+    limit: Option<u32>,
+    inclusive: Option<bool>,
+    paging: &PageOptions,
+) -> Result<(ApiResponse, PaginationMeta), ApiError> {
+    let mut params = HashMap::new();
+    params.insert("channel".to_string(), json!(channel));
+    params.insert("ts".to_string(), json!(thread_ts));
 
-        let mut params = HashMap::new();
-        params.insert("channel".to_string(), json!(channel));
-        params.insert("ts".to_string(), json!(thread_ts));
+    // Use provided limit or default to 100
+    let page_limit = limit.unwrap_or(100);
+    params.insert("limit".to_string(), json!(page_limit));
 
-        // Use provided limit or default to 100
-        let page_limit = limit.unwrap_or(100);
-        params.insert("limit".to_string(), json!(page_limit));
-
-        if let Some(incl) = inclusive {
-            params.insert("inclusive".to_string(), json!(incl));
-        }
-
-        if let Some(ref cursor_val) = cursor {
-            params.insert("cursor".to_string(), json!(cursor_val));
-        }
-
-        let response = client
-            .call_method(ApiMethod::ConversationsReplies, params)
-            .await?;
-
-        // Capture ok/error status from first response
-        if cursor.is_none() {
-            ok = response.ok;
-            error = response.error.clone();
-        }
-
-        // Extract messages from this page
-        if let Some(messages) = response.data.get("messages") {
-            if let Some(messages_array) = messages.as_array() {
-                all_messages.extend(messages_array.clone());
-            }
-        }
-
-        // Check for next cursor
-        cursor = response
-            .data
-            .get("response_metadata")
-            .and_then(|meta| meta.get("next_cursor"))
-            .and_then(|c| c.as_str())
-            .filter(|c| !c.is_empty())
-            .map(|c| c.to_string());
-
-        // If no next cursor, we're done
-        if cursor.is_none() {
-            break;
-        }
+    if let Some(incl) = inclusive {
+        params.insert("inclusive".to_string(), json!(incl));
     }
 
-    // Build final response with aggregated messages
-    let mut data = HashMap::new();
-    data.insert("messages".to_string(), json!(all_messages));
-
-    // Add empty response_metadata (no next_cursor since we fetched all)
-    let mut response_metadata = HashMap::new();
-    response_metadata.insert("next_cursor".to_string(), json!(""));
-    data.insert("response_metadata".to_string(), json!(response_metadata));
-
-    Ok(ApiResponse { ok, data, error })
+    paginate_messages(client, ApiMethod::ConversationsReplies, params, paging).await
 }
 
 #[cfg(test)]

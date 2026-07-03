@@ -95,9 +95,16 @@ Includes automatic 429 retry with Retry-After/backoff.
 
 ```bash
 slack search <query> [--count=N] [--page=N] [--sort=TYPE] [--sort_dir=DIR]
+             [--all] [--max-pages=N]
 ```
 
 Requires a user token (`search:read` user scope).
+
+- `--all` fetches pages starting from `--page` (default 1), merging
+  `messages.matches` across pages, capped at `--max-pages` (default 10).
+  429 responses are retried automatically by the client.
+- Envelope `meta.pagination` reports `pages_fetched` and `next_page` when
+  more results remain.
 
 ### `conv` — Conversations
 
@@ -107,29 +114,52 @@ slack conv list [--filter=KEY:VALUE]... [--format=FORMAT] [--sort=FIELD]
 slack conv search <pattern> [--select]
 slack conv select
 slack conv history <channel> [--limit=N] [--oldest=TS] [--latest=TS]
+                   [--cursor=CURSOR] [--all] [--max-pages=N]
 slack conv history --interactive [--filter=KEY:VALUE]...
+slack conv open <user_id>... [--token-type=bot|user] [--raw]
 ```
+
+- `conv history` fetches a single page by default. `--cursor` starts from a
+  pagination cursor; `--all` follows `next_cursor` until exhausted, capped
+  at `--max-pages` (default 10). 429 responses are retried automatically.
+  Envelope `meta.pagination` reports `pages_fetched` and `next_cursor` when
+  results were truncated.
+- `conv open` wraps `conversations.open` and prints the opened DM (one user
+  ID) or group DM (multiple user IDs) channel. It is idempotent, posts no
+  content, and notifies nobody, so it is **not** gated by
+  `SLACKCLI_ALLOW_WRITE`.
 
 ### `thread` — Threads
 
 ```bash
 slack thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw]
+                 [--cursor=CURSOR] [--all] [--max-pages=N]
                  [--token-type=bot|user]
 ```
+
+Fetches a single page by default; `--cursor` / `--all` / `--max-pages`
+behave as for `conv history` (429s retried automatically, pagination info
+in envelope `meta.pagination`).
 
 ### `users` — User Information
 
 ```bash
 slack users info <user_id>
+slack users lookup --email <email>
 slack users cache-update [--force]
 slack users resolve-mentions <text> [--format=FORMAT]
 ```
+
+`users lookup` wraps `users.lookupByEmail` and prints the matching user
+object; a `users_not_found` error gets a friendly explanation.
 
 ### `msg` — Message Operations (write-gated)
 
 ```bash
 slack msg post <channel> <text> [--thread-ts=TS] [--reply-broadcast] [--yes]
-               [--token-type=bot|user] [--idempotency-key=KEY]
+               [--blocks=JSON|@FILE] [--token-type=bot|user]
+               [--idempotency-key=KEY]
+slack msg post --user <user_id> [<text>] [--blocks=JSON|@FILE] [--yes] ...
 slack msg update <channel> <ts> <text> [--yes] [--idempotency-key=KEY]
 slack msg delete <channel> <ts> [--yes] [--idempotency-key=KEY]
 ```
@@ -137,6 +167,13 @@ slack msg delete <channel> <ts> [--yes] [--idempotency-key=KEY]
 - Requires `SLACKCLI_ALLOW_WRITE=true` (the default).
 - `--yes` confirms destructive operations in non-interactive mode.
 - `--idempotency-key` prevents duplicate writes on retries.
+- `--blocks` sends Block Kit blocks: a JSON array inline, or `@<path>` to
+  read the array from a file. The value must parse as a JSON array. With
+  `--blocks`, the positional text is optional and becomes the notification
+  fallback text.
+- `--user` posts to a DM: the DM is opened (or resumed) via
+  `conversations.open` first, then the message is posted to the returned
+  channel. Mutually exclusive with the positional channel argument.
 
 ### `react` — Reactions (write-gated)
 
@@ -198,3 +235,8 @@ All commands output JSON with the unified envelope:
 
 Set `SLACKRS_OUTPUT=raw` (or pass `--raw` where supported) to get the raw
 Slack API response only.
+
+Commands that paginate (`search`, `conv history`, `thread get`) add a
+`meta.pagination` object: `pages_fetched`, plus `next_cursor` (cursor-based
+APIs) or `next_page` (page-based `search.messages`) when more results
+remain.

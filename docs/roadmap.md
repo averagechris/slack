@@ -111,13 +111,13 @@ recorded in AGENTS.md.
       `release` orchestrator flake apps
 - [x] `.builds/release-linux-x86_64.yml`, SourceHut Pages site
 - [x] `CHANGELOG.md` seeded
-- [ ] First tagged release `v0.2.0` cut and published
+- [x] First tagged release `v0.2.0` cut and published
 
 ### Feature backlog (post-bootstrap, as team needs emerge)
-- [ ] `--blocks` (Block Kit) on `msg post`
-- [ ] `conversations.open` wrapper (DM users directly)
-- [ ] `users lookup --email`
-- [ ] Pagination flags (`--cursor` / `--all`) on history/replies/search
+- [x] `--blocks` (Block Kit) on `msg post`
+- [x] `conversations.open` wrapper (DM users directly)
+- [x] `users lookup --email`
+- [x] Pagination flags (`--cursor` / `--all`) on history/replies/search
 - [ ] pins / bookmarks / channel management wrappers
 
 ### Continuous

@@ -13,6 +13,34 @@ the fork will be v0.2.0.
 
 ## Unreleased
 
+### Added
+
+- `msg post --blocks <json|@file>` sends Block Kit blocks with
+  `chat.postMessage` (validated as a JSON array; positional text becomes
+  optional fallback text).
+- `msg post --user <user_id>` posts to a DM by opening it first via
+  `conversations.open` (mutually exclusive with the positional channel).
+- `conv open <user_id>...` wrapper for `conversations.open` (DM or group
+  DM); idempotent and not gated by `SLACKCLI_ALLOW_WRITE`.
+- `users lookup --email <email>` wrapper for `users.lookupByEmail` with
+  friendly `users_not_found` guidance.
+- Pagination flags: `--cursor` / `--all` / `--max-pages` (default 10) on
+  `conv history` and `thread get`, and `--all` / `--max-pages` on `search`
+  (page-based, merging matches). Envelope `meta.pagination` reports
+  `pages_fetched` plus `next_cursor` / `next_page` when truncated; 429s are
+  retried automatically by the client.
+
+### Changed
+
+- `thread get` now fetches a single page by default; pass `--all` to follow
+  `next_cursor` (previously all pages were always fetched).
+
+### Fixed
+
+- The `release` flake app now describes the release commit
+  (`chore: release vX.Y.Z`) before tagging when the working-copy commit has
+  no description, so `release-tag` no longer tags undescribed commits.
+
 
 ## v0.2.0 - 2026-07-03
 

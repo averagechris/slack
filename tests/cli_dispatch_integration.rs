@@ -267,6 +267,129 @@ async fn test_msg_post_dispatch_allowed_posts_message() {
     teardown();
 }
 
+/// `msg post --user`: opens the DM via conversations.open first, then posts
+/// to the returned channel.
+#[tokio::test]
+#[serial]
+async fn test_msg_post_dispatch_with_user_opens_dm_then_posts() {
+    let _temp = setup_profile();
+    seed_bot_token("xoxb-dispatch-token");
+
+    let server = MockServer::start();
+    let open_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/conversations.open")
+            .json_body_includes(r#"{"users": "U777"}"#);
+        then.status(200).json_body(json!({
+            "ok": true,
+            "channel": {"id": "D777"}
+        }));
+    });
+    let post_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/chat.postMessage")
+            .json_body_includes(r#"{"channel": "D777", "text": "hi there"}"#);
+        then.status(200).json_body(json!({
+            "ok": true,
+            "channel": "D777",
+            "ts": "1234567890.123456"
+        }));
+    });
+    std::env::set_var("SLACK_API_BASE_URL", server.base_url());
+    std::env::set_var("SLACKCLI_ALLOW_WRITE", "true");
+
+    let cli = parse(&[
+        "slack", "msg", "post", "--user", "U777", "hi there", "--yes",
+    ]);
+    let post_args = match cli.command {
+        Command::Msg {
+            command: MsgCommand::Post(post_args),
+        } => post_args,
+        other => panic!("expected msg post, got {:?}", other),
+    };
+
+    let result = slack::cli::run_msg_post(&post_args, &globals()).await;
+
+    assert!(result.is_ok(), "msg post --user failed: {:?}", result.err());
+    open_mock.assert();
+    post_mock.assert();
+
+    teardown();
+}
+
+/// `msg post --blocks`: valid Block Kit JSON is sent as the blocks param with
+/// the positional text as fallback; invalid JSON fails before any request.
+#[tokio::test]
+#[serial]
+async fn test_msg_post_dispatch_with_blocks() {
+    let _temp = setup_profile();
+    seed_bot_token("xoxb-dispatch-token");
+
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/chat.postMessage")
+            .json_body_includes(r#"{"blocks": [{"type": "divider"}]}"#)
+            .json_body_includes(r#"{"text": "fallback"}"#);
+        then.status(200).json_body(json!({
+            "ok": true,
+            "ts": "1234567890.123456"
+        }));
+    });
+    std::env::set_var("SLACK_API_BASE_URL", server.base_url());
+    std::env::set_var("SLACKCLI_ALLOW_WRITE", "true");
+
+    let cli = parse(&[
+        "slack",
+        "msg",
+        "post",
+        "C123",
+        "fallback",
+        "--blocks",
+        r#"[{"type":"divider"}]"#,
+        "--yes",
+    ]);
+    let post_args = match cli.command {
+        Command::Msg {
+            command: MsgCommand::Post(post_args),
+        } => post_args,
+        other => panic!("expected msg post, got {:?}", other),
+    };
+
+    let result = slack::cli::run_msg_post(&post_args, &globals()).await;
+    assert!(
+        result.is_ok(),
+        "msg post --blocks failed: {:?}",
+        result.err()
+    );
+    mock.assert();
+
+    // Invalid blocks (not a JSON array) must fail before any request
+    let cli = parse(&[
+        "slack",
+        "msg",
+        "post",
+        "C123",
+        "fallback",
+        "--blocks",
+        r#"{"type":"divider"}"#,
+        "--yes",
+    ]);
+    let post_args = match cli.command {
+        Command::Msg {
+            command: MsgCommand::Post(post_args),
+        } => post_args,
+        other => panic!("expected msg post, got {:?}", other),
+    };
+    let err = slack::cli::run_msg_post(&post_args, &globals())
+        .await
+        .expect_err("non-array blocks must be rejected");
+    assert!(err.contains("JSON array"), "got: {}", err);
+    assert_eq!(mock.calls(), 1, "no request for invalid blocks");
+
+    teardown();
+}
+
 /// `auth migrate` end-to-end through the clap layer: legacy tokens land in
 /// the (mock) keyring and the plaintext file is deleted.
 #[tokio::test]

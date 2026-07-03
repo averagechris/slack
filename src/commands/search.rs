@@ -1,6 +1,6 @@
 //! Search command implementation
 
-use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse};
+use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse, PaginationMeta};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -45,6 +45,109 @@ pub async fn search(
     }
 
     client.call_method(ApiMethod::SearchMessages, params).await
+}
+
+/// Search request with page-based pagination control
+///
+/// `search.messages` uses page-based pagination (`page` / `paging.pages`),
+/// not cursors. With `all`, pages are fetched starting from `page`
+/// (default: page 1) until the API reports no more pages or `max_pages` is
+/// reached, and `messages.matches` are merged across pages.
+#[derive(Debug, Clone)]
+pub struct SearchRequest {
+    pub query: String,
+    pub count: Option<u32>,
+    pub page: Option<u32>,
+    pub sort: Option<String>,
+    pub sort_dir: Option<String>,
+    /// Follow pages until exhausted (bounded by `max_pages`)
+    pub all: bool,
+    /// Safety cap on pages fetched when `all` is set
+    pub max_pages: u32,
+}
+
+/// Extract `messages.paging.pages` (total pages) from a search response.
+fn total_pages(response: &ApiResponse) -> Option<u32> {
+    response
+        .data
+        .get("messages")?
+        .get("paging")?
+        .get("pages")?
+        .as_u64()
+        .map(|p| p as u32)
+}
+
+/// Extract `messages.matches` from a search response.
+fn matches_of(response: &ApiResponse) -> Vec<serde_json::Value> {
+    response
+        .data
+        .get("messages")
+        .and_then(|m| m.get("matches"))
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Search messages with pagination metadata (used by the `search` command)
+///
+/// Fetches a single page unless `req.all` is set, in which case matches are
+/// merged across pages up to `req.max_pages`. 429 responses are retried by
+/// the client. The returned [`PaginationMeta`] reports pages fetched and
+/// `next_page` when more results remain.
+pub async fn search_paged(
+    client: &ApiClient,
+    req: &SearchRequest,
+) -> Result<(ApiResponse, PaginationMeta), ApiError> {
+    let start_page = req.page.unwrap_or(1).max(1);
+    let mut current_page = start_page;
+    let mut pages_fetched: u32 = 0;
+    let mut all_matches: Vec<serde_json::Value> = Vec::new();
+    let mut first_response: Option<ApiResponse> = None;
+    let mut next_page: Option<u32> = None;
+
+    loop {
+        let response = search(
+            client,
+            req.query.clone(),
+            req.count,
+            Some(current_page),
+            req.sort.clone(),
+            req.sort_dir.clone(),
+        )
+        .await?;
+        pages_fetched += 1;
+
+        all_matches.extend(matches_of(&response));
+        let pages = total_pages(&response);
+        if first_response.is_none() {
+            first_response = Some(response);
+        }
+
+        let has_more = pages.is_some_and(|pages| current_page < pages);
+        if !has_more {
+            break;
+        }
+        if !req.all || pages_fetched >= req.max_pages {
+            next_page = Some(current_page + 1);
+            break;
+        }
+        current_page += 1;
+    }
+
+    let mut response = first_response.expect("at least one page fetched");
+    if let Some(messages) = response.data.get_mut("messages") {
+        if let Some(obj) = messages.as_object_mut() {
+            obj.insert("matches".to_string(), json!(all_matches));
+        }
+    }
+
+    let pagination = PaginationMeta {
+        pages_fetched,
+        next_cursor: None,
+        next_page,
+    };
+
+    Ok((response, pagination))
 }
 
 #[cfg(test)]

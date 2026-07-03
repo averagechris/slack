@@ -393,17 +393,23 @@ pub async fn run_search(cmd: &args::SearchArgs, globals: &GlobalArgs) -> Result<
     let token_type = cmd.token_type;
     let raw = should_output_raw(cmd.raw);
 
+    if cmd.max_pages == 0 {
+        return Err("Error: --max-pages must be at least 1".to_string());
+    }
+
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let response = commands::search(
-        &client,
+    let request = commands::SearchRequest {
         query,
-        cmd.count,
-        cmd.page,
-        cmd.sort.clone(),
-        cmd.sort_dir.clone(),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+        count: cmd.count,
+        page: cmd.page,
+        sort: cmd.sort.clone(),
+        sort_dir: cmd.sort_dir.clone(),
+        all: cmd.all,
+        max_pages: cmd.max_pages,
+    };
+    let (response, pagination) = commands::search_paged(&client, &request)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Display error guidance if response contains a known error
     crate::api::display_wrapper_error_guidance(&response);
@@ -420,7 +426,8 @@ pub async fn run_search(cmd: &args::SearchArgs, globals: &GlobalArgs) -> Result<
             Some(profile_name),
             token_type,
         )
-        .await?;
+        .await?
+        .with_pagination(pagination);
         serde_json::to_string_pretty(&wrapped).unwrap()
     };
 
@@ -722,6 +729,10 @@ pub async fn run_conv_history(
 
     let raw = should_output_raw(cmd.raw);
 
+    if cmd.max_pages == 0 {
+        return Err("Error: --max-pages must be at least 1".to_string());
+    }
+
     // Log debug information if --debug or --trace flag is present
     let debug_level = globals.debug_level;
     let token_store_backend = "keyring";
@@ -737,13 +748,20 @@ pub async fn run_conv_history(
         endpoint,
     );
 
+    let paging = commands::PageOptions {
+        cursor: cmd.cursor.clone(),
+        all: cmd.all,
+        max_pages: cmd.max_pages,
+    };
+
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let mut response = commands::conv_history(
+    let (mut response, pagination) = commands::conv_history_paged(
         &client,
         channel,
         cmd.limit,
         cmd.oldest.clone(),
         cmd.latest.clone(),
+        &paging,
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -776,6 +794,56 @@ pub async fn run_conv_history(
             response_value,
             "conversations.history",
             "conv history",
+            Some(profile_name),
+            token_type,
+        )
+        .await?
+        .with_pagination(pagination);
+        serde_json::to_string_pretty(&wrapped).unwrap()
+    };
+
+    println!("{}", output);
+    Ok(())
+}
+
+/// Open (or resume) a DM/group DM via conversations.open.
+///
+/// Deliberately not gated by SLACKCLI_ALLOW_WRITE: conversations.open is
+/// idempotent, posts no content, and notifies nobody (see
+/// [`crate::api::ApiMethod::is_write`]).
+pub async fn run_conv_open(cmd: &args::ConvOpenArgs, globals: &GlobalArgs) -> Result<(), String> {
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
+
+    // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
+    debug::log_api_context(
+        debug_level,
+        Some(&profile_name),
+        "keyring",
+        resolved_token_type.as_str(),
+        "conversations.open",
+        "https://slack.com/api/conversations.open",
+    );
+
+    let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
+    let response = commands::conv_open(&client, cmd.user_ids.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Display error guidance if response contains a known error
+    crate::api::display_wrapper_error_guidance(&response);
+
+    let output = if raw {
+        serde_json::to_string_pretty(&response).unwrap()
+    } else {
+        let response_value = serde_json::to_value(&response).map_err(|e| e.to_string())?;
+        let wrapped = wrap_with_envelope_and_token_type(
+            response_value,
+            "conversations.open",
+            "conv open",
             Some(profile_name),
             token_type,
         )
@@ -822,13 +890,15 @@ pub async fn build_thread_get_output(
     thread_ts: String,
     limit: Option<u32>,
     inclusive: Option<bool>,
+    paging: &commands::PageOptions,
     raw: bool,
     profile_name: String,
     token_type: Option<TokenType>,
 ) -> Result<Value, String> {
-    let mut response = commands::thread_get(client, channel, thread_ts, limit, inclusive)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (mut response, pagination) =
+        commands::thread_get_paged(client, channel, thread_ts, limit, inclusive, paging)
+            .await
+            .map_err(|e| e.to_string())?;
 
     crate::api::display_wrapper_error_guidance(&response);
 
@@ -856,7 +926,8 @@ pub async fn build_thread_get_output(
         Some(profile_name),
         token_type,
     )
-    .await?;
+    .await?
+    .with_pagination(pagination);
     serde_json::to_value(wrapped).map_err(|e| e.to_string())
 }
 
@@ -867,6 +938,15 @@ pub async fn run_thread_get(cmd: &args::ThreadGetArgs, globals: &GlobalArgs) -> 
     let profile_name = globals.profile_name();
     let token_type = cmd.token_type;
     let raw = should_output_raw(cmd.raw);
+
+    if cmd.max_pages == 0 {
+        return Err("Error: --max-pages must be at least 1".to_string());
+    }
+    let paging = commands::PageOptions {
+        cursor: cmd.cursor.clone(),
+        all: cmd.all,
+        max_pages: cmd.max_pages,
+    };
 
     // Log debug information if --debug or --trace flag is present
     let debug_level = globals.debug_level;
@@ -890,6 +970,7 @@ pub async fn run_thread_get(cmd: &args::ThreadGetArgs, globals: &GlobalArgs) -> 
         thread_ts,
         cmd.limit,
         inclusive,
+        &paging,
         raw,
         profile_name,
         token_type,
@@ -946,6 +1027,59 @@ pub async fn run_users_info(cmd: &args::UsersInfoArgs, globals: &GlobalArgs) -> 
             response_value,
             "users.info",
             "users info",
+            Some(profile_name),
+            token_type,
+        )
+        .await?;
+        serde_json::to_string_pretty(&wrapped).unwrap()
+    };
+
+    println!("{}", output);
+    Ok(())
+}
+
+pub async fn run_users_lookup(
+    cmd: &args::UsersLookupArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let email = cmd.email.clone();
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
+
+    // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
+    debug::log_api_context(
+        debug_level,
+        Some(&profile_name),
+        "keyring",
+        resolved_token_type.as_str(),
+        "users.lookupByEmail",
+        "https://slack.com/api/users.lookupByEmail",
+    );
+
+    let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
+    let response = commands::users_lookup_by_email(&client, email.clone())
+        .await
+        .map_err(|e| match e {
+            crate::api::ApiError::SlackError(ref code) if code == "users_not_found" => {
+                format!("No user found with email '{}'", email)
+            }
+            other => other.to_string(),
+        })?;
+
+    // Display error guidance if response contains a known error
+    crate::api::display_wrapper_error_guidance(&response);
+
+    let output = if raw {
+        serde_json::to_string_pretty(&response).unwrap()
+    } else {
+        let response_value = serde_json::to_value(&response).map_err(|e| e.to_string())?;
+        let wrapped = wrap_with_envelope_and_token_type(
+            response_value,
+            "users.lookupByEmail",
+            "users lookup",
             Some(profile_name),
             token_type,
         )
@@ -1031,12 +1165,90 @@ async fn get_team_and_user_ids_from_profile(
     Ok((profile.team_id, profile.user_id))
 }
 
+/// Read a CLI argument value, supporting the `@<path>` file convention:
+/// values starting with `@` are read from the named file.
+pub fn read_arg_value(raw: &str) -> Result<String, String> {
+    if let Some(path) = raw.strip_prefix('@') {
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read file '{}': {}", path, e))
+    } else {
+        Ok(raw.to_string())
+    }
+}
+
+/// Parse and validate a `--blocks` argument (inline JSON array or `@file`).
+pub fn parse_blocks_arg(raw: &str) -> Result<Value, String> {
+    let content = read_arg_value(raw)?;
+    let value: Value =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid --blocks JSON: {}", e))?;
+    if !value.is_array() {
+        return Err(
+            "Invalid --blocks value: expected a JSON array of Block Kit blocks".to_string(),
+        );
+    }
+    Ok(value)
+}
+
+/// Destination for `msg post`: an explicit channel or a user DM.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MsgPostTarget {
+    Channel(String),
+    User(String),
+}
+
+/// Resolve `msg post` positionals and flags into a target and message text.
+///
+/// The positional channel argument and `--user` are mutually exclusive.
+/// When `--user` is given, a single positional (which clap parses into the
+/// channel slot) is treated as the message text. Text is required unless
+/// `--blocks` is provided (in which case text is optional fallback text).
+pub fn resolve_msg_post_input(
+    channel: Option<&str>,
+    text: Option<&str>,
+    user: Option<&str>,
+    has_blocks: bool,
+) -> Result<(MsgPostTarget, Option<String>), String> {
+    let (target, text) = match user {
+        Some(user) => {
+            if text.is_some() {
+                return Err(
+                    "Error: --user is mutually exclusive with the positional channel argument"
+                        .to_string(),
+                );
+            }
+            (
+                MsgPostTarget::User(user.to_string()),
+                channel.map(str::to_string),
+            )
+        }
+        None => {
+            let channel = channel.ok_or_else(|| {
+                "Error: channel argument required (or use --user <USER_ID>)".to_string()
+            })?;
+            (
+                MsgPostTarget::Channel(channel.to_string()),
+                text.map(str::to_string),
+            )
+        }
+    };
+
+    if text.is_none() && !has_blocks {
+        return Err("Error: message text required unless --blocks is provided".to_string());
+    }
+
+    Ok((target, text))
+}
+
 pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
     let non_interactive = globals.non_interactive;
-    let channel = cmd.channel.clone();
-    let text = cmd.text.clone();
+    let (target, text) = resolve_msg_post_input(
+        cmd.channel.as_deref(),
+        cmd.text.as_deref(),
+        cmd.user.as_deref(),
+        cmd.blocks.is_some(),
+    )?;
+    let blocks = cmd.blocks.as_deref().map(parse_blocks_arg).transpose()?;
     let thread_ts = cmd.thread_ts.clone();
     let reply_broadcast = cmd.reply_broadcast;
     let yes = cmd.yes;
@@ -1052,6 +1264,26 @@ pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Resu
     let raw = should_output_raw(cmd.raw);
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
+    // Resolve the destination channel: --user opens (or resumes) the DM
+    // first via conversations.open, then posts to the returned channel.
+    let channel = match target {
+        MsgPostTarget::Channel(channel) => channel,
+        MsgPostTarget::User(user) => {
+            let open_response = commands::conv_open(&client, vec![user])
+                .await
+                .map_err(|e| e.to_string())?;
+            commands::extract_opened_channel_id(&open_response)?
+        }
+    };
+
+    let post_params = commands::MsgPostParams {
+        channel: channel.clone(),
+        text: text.clone(),
+        blocks: blocks.clone(),
+        thread_ts: thread_ts.clone(),
+        reply_broadcast,
+    };
+
     // Check idempotency if key provided
     let (response_value, idempotency_status) = if let Some(key) = idempotency_key.clone() {
         let mut handler = IdempotencyHandler::new().map_err(|e| e.to_string())?;
@@ -1059,7 +1291,12 @@ pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Resu
         // Build params for fingerprinting
         let mut params = serde_json::Map::new();
         params.insert("channel".to_string(), serde_json::json!(channel.clone()));
-        params.insert("text".to_string(), serde_json::json!(text.clone()));
+        if let Some(ref text) = text {
+            params.insert("text".to_string(), serde_json::json!(text));
+        }
+        if let Some(ref blocks) = blocks {
+            params.insert("blocks".to_string(), blocks.clone());
+        }
         if let Some(ref ts) = thread_ts {
             params.insert("thread_ts".to_string(), serde_json::json!(ts));
             if reply_broadcast {
@@ -1091,17 +1328,9 @@ pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Resu
                 fingerprint,
             } => {
                 // Execute and store
-                let response = commands::msg_post(
-                    &client,
-                    channel,
-                    text,
-                    thread_ts,
-                    reply_broadcast,
-                    yes,
-                    non_interactive,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
+                let response = commands::msg_post(&client, post_params, yes, non_interactive)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 let response_value = serde_json::to_value(&response).map_err(|e| e.to_string())?;
 
@@ -1119,17 +1348,9 @@ pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Resu
         }
     } else {
         // No idempotency key - execute normally
-        let response = commands::msg_post(
-            &client,
-            channel,
-            text,
-            thread_ts,
-            reply_broadcast,
-            yes,
-            non_interactive,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let response = commands::msg_post(&client, post_params, yes, non_interactive)
+            .await
+            .map_err(|e| e.to_string())?;
 
         (
             serde_json::to_value(&response).map_err(|e| e.to_string())?,
@@ -2027,5 +2248,85 @@ mod tests {
         assert!(should_output_raw(true));
 
         std::env::remove_var("SLACKRS_OUTPUT");
+    }
+
+    // Tests for the --blocks argument parser (JSON array validation + @file)
+    #[test]
+    fn test_parse_blocks_arg_valid_array() {
+        let blocks = parse_blocks_arg(r#"[{"type":"section"}]"#).unwrap();
+        assert!(blocks.is_array());
+        assert_eq!(blocks[0]["type"], "section");
+    }
+
+    #[test]
+    fn test_parse_blocks_arg_rejects_non_array() {
+        let err = parse_blocks_arg(r#"{"type":"section"}"#).unwrap_err();
+        assert!(err.contains("JSON array"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_blocks_arg_rejects_invalid_json() {
+        let err = parse_blocks_arg("not json").unwrap_err();
+        assert!(err.contains("Invalid --blocks JSON"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_blocks_arg_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.json");
+        std::fs::write(&path, r#"[{"type":"divider"}]"#).unwrap();
+        let blocks = parse_blocks_arg(&format!("@{}", path.display())).unwrap();
+        assert_eq!(blocks[0]["type"], "divider");
+    }
+
+    #[test]
+    fn test_parse_blocks_arg_missing_file() {
+        let err = parse_blocks_arg("@/nonexistent/blocks.json").unwrap_err();
+        assert!(err.contains("Failed to read file"), "got: {}", err);
+    }
+
+    // Tests for msg post channel/--user/--blocks resolution
+    #[test]
+    fn test_resolve_msg_post_channel_and_text() {
+        let (target, text) =
+            resolve_msg_post_input(Some("C123"), Some("hello"), None, false).unwrap();
+        assert_eq!(target, MsgPostTarget::Channel("C123".to_string()));
+        assert_eq!(text.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn test_resolve_msg_post_user_takes_single_positional_as_text() {
+        // clap parses `msg post --user U1 "hi"` with "hi" in the channel slot
+        let (target, text) = resolve_msg_post_input(Some("hi"), None, Some("U1"), false).unwrap();
+        assert_eq!(target, MsgPostTarget::User("U1".to_string()));
+        assert_eq!(text.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn test_resolve_msg_post_user_conflicts_with_channel() {
+        let err = resolve_msg_post_input(Some("C123"), Some("hi"), Some("U1"), false).unwrap_err();
+        assert!(err.contains("mutually exclusive"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_resolve_msg_post_requires_channel_or_user() {
+        let err = resolve_msg_post_input(None, None, None, false).unwrap_err();
+        assert!(err.contains("channel argument required"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_resolve_msg_post_text_required_without_blocks() {
+        let err = resolve_msg_post_input(Some("C123"), None, None, false).unwrap_err();
+        assert!(err.contains("text required"), "got: {}", err);
+
+        // With blocks, text is optional (fallback only)
+        let (target, text) = resolve_msg_post_input(Some("C123"), None, None, true).unwrap();
+        assert_eq!(target, MsgPostTarget::Channel("C123".to_string()));
+        assert!(text.is_none());
+
+        // --user with blocks and no text is also fine
+        let (target, text) = resolve_msg_post_input(None, None, Some("U1"), true).unwrap();
+        assert_eq!(target, MsgPostTarget::User("U1".to_string()));
+        assert!(text.is_none());
     }
 }

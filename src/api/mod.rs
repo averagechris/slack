@@ -25,7 +25,7 @@ pub use call::{
 pub use client::{ApiClient, ApiClientConfig, ApiClientError, ApiError, RequestBody};
 
 // Re-export unified envelope types
-pub use envelope::{CommandMeta, CommandResponse};
+pub use envelope::{CommandMeta, CommandResponse, PaginationMeta};
 
 // Re-export types for wrapper commands
 pub use types::{ApiMethod, ApiResponse};

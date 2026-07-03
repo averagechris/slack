@@ -86,6 +86,7 @@ fn test_command_meta_serialization() {
         token_type: Some("bot".to_string()),
         idempotency_key: None,
         idempotency_status: None,
+        pagination: None,
     };
 
     let json = serde_json::to_string(&meta).unwrap();
@@ -121,6 +122,7 @@ fn test_different_commands_have_different_command_names() {
         token_type: Some("bot".to_string()),
         idempotency_key: None,
         idempotency_status: None,
+        pagination: None,
     };
 
     let api_json = serde_json::to_value(&api_meta).unwrap();

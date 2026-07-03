@@ -1,6 +1,7 @@
 //! API call functionality for conversations
 
-use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse};
+use crate::api::{ApiClient, ApiError, ApiMethod, ApiResponse, PaginationMeta};
+use crate::commands::paging::{paginate_messages, PageOptions};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -82,7 +83,7 @@ pub async fn conv_list(
     Ok(ApiResponse { ok, data, error })
 }
 
-/// Get conversation history
+/// Get conversation history (single page, no explicit cursor)
 ///
 /// # Arguments
 /// * `client` - API client
@@ -101,6 +102,33 @@ pub async fn conv_history(
     oldest: Option<String>,
     latest: Option<String>,
 ) -> Result<ApiResponse, ApiError> {
+    let (response, _) = conv_history_paged(
+        client,
+        channel,
+        limit,
+        oldest,
+        latest,
+        &PageOptions::default(),
+    )
+    .await?;
+    Ok(response)
+}
+
+/// Get conversation history with explicit cursor pagination control
+///
+/// Follows `next_cursor` when `paging.all` is set (capped at
+/// `paging.max_pages`), aggregating `messages` across pages. 429 responses
+/// are retried by the client. Returns the aggregated response plus
+/// [`PaginationMeta`] describing pages fetched and the resume cursor when
+/// results were truncated.
+pub async fn conv_history_paged(
+    client: &ApiClient,
+    channel: String,
+    limit: Option<u32>,
+    oldest: Option<String>,
+    latest: Option<String>,
+    paging: &PageOptions,
+) -> Result<(ApiResponse, PaginationMeta), ApiError> {
     let mut params = HashMap::new();
     params.insert("channel".to_string(), json!(channel));
 
@@ -116,9 +144,41 @@ pub async fn conv_history(
         params.insert("latest".to_string(), json!(latest));
     }
 
+    paginate_messages(client, ApiMethod::ConversationsHistory, params, paging).await
+}
+
+/// Open (or resume) a direct message or multi-person direct message
+///
+/// Wraps `conversations.open`. This is idempotent — opening an existing DM
+/// returns the same channel — posts no content and notifies nobody, so it is
+/// intentionally not gated by the SLACKCLI_ALLOW_WRITE write guard (see
+/// [`ApiMethod::is_write`]).
+///
+/// # Arguments
+/// * `client` - API client
+/// * `users` - One or more user IDs (2+ IDs open a group DM)
+///
+/// # Returns
+/// * `Ok(ApiResponse)` containing the opened `channel` object
+/// * `Err(ApiError)` if the operation fails
+pub async fn conv_open(client: &ApiClient, users: Vec<String>) -> Result<ApiResponse, ApiError> {
+    let mut params = HashMap::new();
+    params.insert("users".to_string(), json!(users.join(",")));
+
     client
-        .call_method(ApiMethod::ConversationsHistory, params)
+        .call_method(ApiMethod::ConversationsOpen, params)
         .await
+}
+
+/// Extract the opened channel ID from a `conversations.open` response.
+pub fn extract_opened_channel_id(response: &ApiResponse) -> Result<String, String> {
+    response
+        .data
+        .get("channel")
+        .and_then(|channel| channel.get("id"))
+        .and_then(|id| id.as_str())
+        .map(|id| id.to_string())
+        .ok_or_else(|| "conversations.open response did not contain channel.id".to_string())
 }
 
 #[cfg(test)]

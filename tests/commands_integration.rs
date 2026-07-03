@@ -62,10 +62,12 @@ async fn test_msg_post_with_thread_ts() {
     let client = ApiClient::new_with_base_url("test_token".to_string(), mock_server.uri());
     let result = commands::msg_post(
         &client,
-        "C123456".to_string(),
-        "thread reply".to_string(),
-        Some("1234567890.111111".to_string()),
-        false,
+        commands::MsgPostParams {
+            channel: "C123456".to_string(),
+            text: Some("thread reply".to_string()),
+            thread_ts: Some("1234567890.111111".to_string()),
+            ..Default::default()
+        },
         true,
         false,
     )
@@ -97,10 +99,13 @@ async fn test_msg_post_with_thread_ts_and_reply_broadcast() {
     let client = ApiClient::new_with_base_url("test_token".to_string(), mock_server.uri());
     let result = commands::msg_post(
         &client,
-        "C123456".to_string(),
-        "broadcast reply".to_string(),
-        Some("1234567890.111111".to_string()),
-        true, // reply_broadcast = true
+        commands::MsgPostParams {
+            channel: "C123456".to_string(),
+            text: Some("broadcast reply".to_string()),
+            thread_ts: Some("1234567890.111111".to_string()),
+            reply_broadcast: true,
+            ..Default::default()
+        },
         true,
         false,
     )
@@ -130,10 +135,13 @@ async fn test_msg_post_without_thread_ts_ignores_reply_broadcast() {
     let client = ApiClient::new_with_base_url("test_token".to_string(), mock_server.uri());
     let result = commands::msg_post(
         &client,
-        "C123456".to_string(),
-        "normal message".to_string(),
-        None, // no thread_ts
-        true, // reply_broadcast = true (should be ignored)
+        commands::MsgPostParams {
+            channel: "C123456".to_string(),
+            text: Some("normal message".to_string()),
+            thread_ts: None,       // no thread_ts
+            reply_broadcast: true, // should be ignored without thread_ts
+            ..Default::default()
+        },
         true,
         false,
     )
@@ -196,10 +204,11 @@ async fn test_msg_post_requires_allow_write() {
     // Should fail when SLACKCLI_ALLOW_WRITE=false
     let result = commands::msg_post(
         &client,
-        "C123456".to_string(),
-        "test message".to_string(),
-        None,
-        false,
+        commands::MsgPostParams {
+            channel: "C123456".to_string(),
+            text: Some("test message".to_string()),
+            ..Default::default()
+        },
         true,
         false,
     )
@@ -234,10 +243,11 @@ async fn test_msg_post_calls_correct_api_with_allow_write() {
     let client = ApiClient::new_with_base_url("test_token".to_string(), mock_server.uri());
     let result = commands::msg_post(
         &client,
-        "C123456".to_string(),
-        "test message".to_string(),
-        None,
-        false,
+        commands::MsgPostParams {
+            channel: "C123456".to_string(),
+            text: Some("test message".to_string()),
+            ..Default::default()
+        },
         true,
         false,
     )

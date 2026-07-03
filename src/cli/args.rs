@@ -364,6 +364,14 @@ pub struct SearchArgs {
     #[arg(long = "sort_dir", value_name = "DIR")]
     pub sort_dir: Option<String>,
 
+    /// Fetch all pages (starting from --page), merging matches
+    #[arg(long)]
+    pub all: bool,
+
+    /// Safety cap on pages fetched with --all (429s are retried automatically)
+    #[arg(long, value_name = "N", default_value_t = 10)]
+    pub max_pages: u32,
+
     /// Token type to use (bot or user)
     #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
     pub token_type: Option<TokenType>,
@@ -383,6 +391,11 @@ pub enum ConvCommand {
     Search(ConvSearchArgs),
     /// Get conversation history
     History(ConvHistoryArgs),
+    /// Open (or resume) a DM/group DM with one or more users
+    ///
+    /// Wraps conversations.open. Idempotent and content-free (no message is
+    /// posted, nobody is notified), so it is not gated by SLACKCLI_ALLOW_WRITE.
+    Open(ConvOpenArgs),
 }
 
 #[derive(Debug, Args)]
@@ -518,6 +531,33 @@ pub struct ConvHistoryArgs {
     #[arg(long, value_name = "TS")]
     pub latest: Option<String>,
 
+    /// Start fetching from this pagination cursor
+    #[arg(long, value_name = "CURSOR")]
+    pub cursor: Option<String>,
+
+    /// Follow next_cursor until exhausted (bounded by --max-pages)
+    #[arg(long)]
+    pub all: bool,
+
+    /// Safety cap on pages fetched with --all (429s are retried automatically)
+    #[arg(long, value_name = "N", default_value_t = 10)]
+    pub max_pages: u32,
+
+    /// Token type to use (bot or user)
+    #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
+    pub token_type: Option<TokenType>,
+
+    /// Output raw Slack API response (without envelope)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ConvOpenArgs {
+    /// One or more user IDs (2+ IDs open a group DM)
+    #[arg(value_name = "USER_ID", required = true, num_args = 1..)]
+    pub user_ids: Vec<String>,
+
     /// Token type to use (bot or user)
     #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
     pub token_type: Option<TokenType>,
@@ -533,7 +573,9 @@ pub enum ThreadCommand {
     ///
     /// Default JSON wraps the Slack response and adds response.resolved_users
     /// at thread scope. --raw returns the Slack-native conversations.replies
-    /// shape without wrapper metadata. Pagination is followed automatically.
+    /// shape without wrapper metadata. Fetches a single page by default; use
+    /// --all to follow next_cursor (bounded by --max-pages) and --cursor to
+    /// resume from a previous page.
     Get(ThreadGetArgs),
 }
 
@@ -553,6 +595,18 @@ pub struct ThreadGetArgs {
     #[arg(long)]
     pub inclusive: bool,
 
+    /// Start fetching from this pagination cursor
+    #[arg(long, value_name = "CURSOR")]
+    pub cursor: Option<String>,
+
+    /// Follow next_cursor until exhausted (bounded by --max-pages)
+    #[arg(long)]
+    pub all: bool,
+
+    /// Safety cap on pages fetched with --all (429s are retried automatically)
+    #[arg(long, value_name = "N", default_value_t = 10)]
+    pub max_pages: u32,
+
     /// Token type to use (bot or user)
     #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
     pub token_type: Option<TokenType>,
@@ -566,6 +620,8 @@ pub struct ThreadGetArgs {
 pub enum UsersCommand {
     /// Get user information
     Info(UsersInfoArgs),
+    /// Look up a user by email address
+    Lookup(UsersLookupArgs),
     /// Update user cache for mention resolution
     CacheUpdate(UsersCacheUpdateArgs),
     /// Resolve user mentions in text
@@ -576,6 +632,21 @@ pub enum UsersCommand {
 pub struct UsersInfoArgs {
     /// User ID (e.g. U123456)
     pub user_id: String,
+
+    /// Token type to use (bot or user)
+    #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
+    pub token_type: Option<TokenType>,
+
+    /// Output raw Slack API response (without envelope)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct UsersLookupArgs {
+    /// Email address to look up (users.lookupByEmail)
+    #[arg(long, value_name = "EMAIL", required = true)]
+    pub email: String,
 
     /// Token type to use (bot or user)
     #[arg(long, value_name = "TYPE", value_parser = token_type_value)]
@@ -619,11 +690,23 @@ pub enum MsgCommand {
 
 #[derive(Debug, Args)]
 pub struct MsgPostArgs {
-    /// Channel ID
-    pub channel: String,
+    /// Channel ID (omit when using --user; with --user, a single positional
+    /// argument is treated as the message text)
+    pub channel: Option<String>,
 
-    /// Message text
-    pub text: String,
+    /// Message text (fallback text when --blocks is provided; required
+    /// unless --blocks is given)
+    pub text: Option<String>,
+
+    /// Post to a DM with this user ID instead of a channel
+    /// (opens the DM via conversations.open first; mutually exclusive with
+    /// the positional channel argument)
+    #[arg(long, value_name = "USER_ID")]
+    pub user: Option<String>,
+
+    /// Block Kit blocks as a JSON array, or @<path> to read from a file
+    #[arg(long, value_name = "JSON|@FILE")]
+    pub blocks: Option<String>,
 
     /// Thread timestamp for reply
     #[arg(long, value_name = "TS")]
@@ -954,8 +1037,8 @@ mod tests {
             Command::Msg {
                 command: MsgCommand::Post(args),
             } => {
-                assert_eq!(args.channel, "C123");
-                assert_eq!(args.text, "hello");
+                assert_eq!(args.channel.as_deref(), Some("C123"));
+                assert_eq!(args.text.as_deref(), Some("hello"));
                 assert_eq!(args.thread_ts.as_deref(), Some("123.456"));
                 assert!(args.reply_broadcast);
                 assert_eq!(args.idempotency_key.as_deref(), Some("k1"));
@@ -989,11 +1072,110 @@ mod tests {
     #[test]
     fn test_required_positionals_missing() {
         assert!(parse(&["slack", "thread", "get", "C1"]).is_err());
-        assert!(parse(&["slack", "msg", "post", "C1"]).is_err());
+        // msg post positionals are validated at runtime (channel/text are
+        // optional at parse time to support --user and --blocks)
         assert!(parse(&["slack", "react", "add", "C1", "1.2"]).is_err());
         assert!(parse(&["slack", "auth", "rename", "only-one"]).is_err());
         assert!(parse(&["slack", "search"]).is_err());
         assert!(parse(&["slack", "conv", "search"]).is_err());
+        assert!(parse(&["slack", "conv", "open"]).is_err());
+        assert!(parse(&["slack", "users", "lookup"]).is_err());
+    }
+
+    #[test]
+    fn test_msg_post_user_and_blocks_flags() {
+        let cli = parse(&[
+            "slack", "msg", "post", "--user", "U123", "hello", "--blocks", "[]",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Msg {
+                command: MsgCommand::Post(args),
+            } => {
+                assert_eq!(args.user.as_deref(), Some("U123"));
+                // Single positional lands in the channel slot; runtime
+                // resolution treats it as text when --user is present.
+                assert_eq!(args.channel.as_deref(), Some("hello"));
+                assert!(args.text.is_none());
+                assert_eq!(args.blocks.as_deref(), Some("[]"));
+            }
+            _ => panic!("expected msg post"),
+        }
+
+        // --blocks alone (no text) parses; text requirement is runtime-checked
+        assert!(parse(&["slack", "msg", "post", "C1", "--blocks", "[]"]).is_ok());
+    }
+
+    #[test]
+    fn test_conv_open_args() {
+        let cli = parse(&["slack", "conv", "open", "U1", "U2", "--token-type", "user"]).unwrap();
+        match cli.command {
+            Command::Conv {
+                command: ConvCommand::Open(args),
+            } => {
+                assert_eq!(args.user_ids, vec!["U1", "U2"]);
+                assert_eq!(args.token_type, Some(TokenType::User));
+            }
+            _ => panic!("expected conv open"),
+        }
+    }
+
+    #[test]
+    fn test_users_lookup_args() {
+        let cli = parse(&["slack", "users", "lookup", "--email", "a@b.co"]).unwrap();
+        match cli.command {
+            Command::Users {
+                command: UsersCommand::Lookup(args),
+            } => assert_eq!(args.email, "a@b.co"),
+            _ => panic!("expected users lookup"),
+        }
+    }
+
+    #[test]
+    fn test_pagination_flags() {
+        let cli = parse(&[
+            "slack",
+            "conv",
+            "history",
+            "C1",
+            "--cursor",
+            "cur1",
+            "--all",
+            "--max-pages",
+            "3",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Conv {
+                command: ConvCommand::History(args),
+            } => {
+                assert_eq!(args.cursor.as_deref(), Some("cur1"));
+                assert!(args.all);
+                assert_eq!(args.max_pages, 3);
+            }
+            _ => panic!("expected conv history"),
+        }
+
+        let cli = parse(&["slack", "thread", "get", "C1", "1.2", "--all"]).unwrap();
+        match cli.command {
+            Command::Thread {
+                command: ThreadCommand::Get(args),
+            } => {
+                assert!(args.all);
+                assert_eq!(args.max_pages, 10);
+                assert!(args.cursor.is_none());
+            }
+            _ => panic!("expected thread get"),
+        }
+
+        let cli = parse(&["slack", "search", "q", "--all", "--max-pages", "2"]).unwrap();
+        match cli.command {
+            Command::Search(args) => {
+                assert!(args.all);
+                assert_eq!(args.max_pages, 2);
+            }
+            _ => panic!("expected search"),
+        }
     }
 
     #[test]

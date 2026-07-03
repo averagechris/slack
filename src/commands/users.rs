@@ -20,6 +20,30 @@ pub async fn users_info(client: &ApiClient, user: String) -> Result<ApiResponse,
     client.call_method(ApiMethod::UsersInfo, params).await
 }
 
+/// Look up a user by email address
+///
+/// Wraps `users.lookupByEmail`. A `users_not_found` Slack error (no matching
+/// workspace user) surfaces with friendly guidance on stderr.
+///
+/// # Arguments
+/// * `client` - API client
+/// * `email` - Email address to look up
+///
+/// # Returns
+/// * `Ok(ApiResponse)` with the matching user object
+/// * `Err(ApiError)` if the operation fails or no user matches
+pub async fn users_lookup_by_email(
+    client: &ApiClient,
+    email: String,
+) -> Result<ApiResponse, ApiError> {
+    let mut params = HashMap::new();
+    params.insert("email".to_string(), json!(email));
+
+    client
+        .call_method(ApiMethod::UsersLookupByEmail, params)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

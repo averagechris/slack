@@ -5,14 +5,26 @@ use crate::commands::guards::{check_write_allowed, confirm_destructive_with_hint
 use serde_json::json;
 use std::collections::HashMap;
 
+/// Parameters for posting a message with `chat.postMessage`
+#[derive(Debug, Clone, Default)]
+pub struct MsgPostParams {
+    /// Channel ID to post to
+    pub channel: String,
+    /// Message text (fallback text when `blocks` is set)
+    pub text: Option<String>,
+    /// Block Kit blocks (a JSON array, validated by the CLI layer)
+    pub blocks: Option<serde_json::Value>,
+    /// Thread timestamp to reply to
+    pub thread_ts: Option<String>,
+    /// Whether to broadcast a thread reply to the channel
+    pub reply_broadcast: bool,
+}
+
 /// Post a message to a channel
 ///
 /// # Arguments
 /// * `client` - API client
-/// * `channel` - Channel ID
-/// * `text` - Message text
-/// * `thread_ts` - Optional thread timestamp to reply to
-/// * `reply_broadcast` - Whether to broadcast thread reply to channel
+/// * `params` - Message parameters (channel, text and/or blocks, threading)
 /// * `yes` - Skip confirmation prompt
 /// * `non_interactive` - Whether running in non-interactive mode
 ///
@@ -21,31 +33,39 @@ use std::collections::HashMap;
 /// * `Err(ApiError)` if the operation fails
 pub async fn msg_post(
     client: &ApiClient,
-    channel: String,
-    text: String,
-    thread_ts: Option<String>,
-    reply_broadcast: bool,
+    params: MsgPostParams,
     yes: bool,
     non_interactive: bool,
 ) -> Result<ApiResponse, ApiError> {
     check_write_allowed()?;
 
     // Build hint with example command for non-interactive mode
-    let hint = format!("Example: slack msg post {} \"{}\" --yes", channel, text);
+    let hint = format!(
+        "Example: slack msg post {} \"{}\" --yes",
+        params.channel,
+        params.text.as_deref().unwrap_or("<text>")
+    );
     confirm_destructive_with_hint(yes, "post this message", non_interactive, Some(&hint))?;
 
-    let mut params = HashMap::new();
-    params.insert("channel".to_string(), json!(channel));
-    params.insert("text".to_string(), json!(text));
+    let mut api_params = HashMap::new();
+    api_params.insert("channel".to_string(), json!(params.channel));
+    if let Some(text) = params.text {
+        api_params.insert("text".to_string(), json!(text));
+    }
+    if let Some(blocks) = params.blocks {
+        api_params.insert("blocks".to_string(), blocks);
+    }
 
-    if let Some(ts) = thread_ts {
-        params.insert("thread_ts".to_string(), json!(ts));
-        if reply_broadcast {
-            params.insert("reply_broadcast".to_string(), json!(true));
+    if let Some(ts) = params.thread_ts {
+        api_params.insert("thread_ts".to_string(), json!(ts));
+        if params.reply_broadcast {
+            api_params.insert("reply_broadcast".to_string(), json!(true));
         }
     }
 
-    client.call_method(ApiMethod::ChatPostMessage, params).await
+    client
+        .call_method(ApiMethod::ChatPostMessage, api_params)
+        .await
 }
 
 /// Update a message
@@ -130,10 +150,11 @@ mod tests {
         let client = ApiClient::with_token("test_token".to_string());
         let result = msg_post(
             &client,
-            "C123456".to_string(),
-            "test message".to_string(),
-            None,
-            false,
+            MsgPostParams {
+                channel: "C123456".to_string(),
+                text: Some("test message".to_string()),
+                ..Default::default()
+            },
             true,
             false,
         )

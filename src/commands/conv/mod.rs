@@ -8,7 +8,7 @@ pub mod select;
 pub mod sort;
 
 // Re-export public API to maintain backward compatibility
-pub use api::{conv_history, conv_list};
+pub use api::{conv_history, conv_history_paged, conv_list, conv_open, extract_opened_channel_id};
 pub use filter::{apply_filters, ConversationFilter, FilterError};
 pub use format::{
     collect_thread_user_ids, enrich_message_with_users, format_response, resolve_thread_users,

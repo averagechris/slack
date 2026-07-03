@@ -14,8 +14,12 @@ pub enum ApiMethod {
     ConversationsHistory,
     /// Get conversation replies (thread messages)
     ConversationsReplies,
+    /// Open (or resume) a direct message / multi-person direct message
+    ConversationsOpen,
     /// Get user info
     UsersInfo,
+    /// Look up a user by email address
+    UsersLookupByEmail,
     /// List users
     UsersList,
     /// Post message
@@ -38,7 +42,9 @@ impl ApiMethod {
             ApiMethod::ConversationsList => "conversations.list",
             ApiMethod::ConversationsHistory => "conversations.history",
             ApiMethod::ConversationsReplies => "conversations.replies",
+            ApiMethod::ConversationsOpen => "conversations.open",
             ApiMethod::UsersInfo => "users.info",
+            ApiMethod::UsersLookupByEmail => "users.lookupByEmail",
             ApiMethod::UsersList => "users.list",
             ApiMethod::ChatPostMessage => "chat.postMessage",
             ApiMethod::ChatUpdate => "chat.update",
@@ -57,11 +63,18 @@ impl ApiMethod {
                 | ApiMethod::ConversationsHistory
                 | ApiMethod::ConversationsReplies
                 | ApiMethod::UsersInfo
+                | ApiMethod::UsersLookupByEmail
                 | ApiMethod::UsersList
         )
     }
 
     /// Check if this is a write operation
+    ///
+    /// `ConversationsOpen` is deliberately NOT classified as a write: it is
+    /// idempotent (re-opening an existing DM returns the same channel),
+    /// posts no content, and notifies nobody. This matches the existing
+    /// semantics where only content-mutating methods (chat.*, reactions.*)
+    /// are writes, so `conv open` is not gated by SLACKCLI_ALLOW_WRITE.
     #[allow(dead_code)]
     pub fn is_write(&self) -> bool {
         matches!(
