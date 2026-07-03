@@ -717,6 +717,19 @@
           )"
           tag="v$version"
 
+          # Ensure the release commit is described before tagging: prepare-release
+          # stages version/changelog changes into the working copy, which may be a
+          # fresh commit with no description — release-tag must never tag an
+          # undescribed commit.
+          if [[ -d .jj ]]; then
+            if [[ -z "$(jj log -r "$revision" --no-graph --color=never -T 'description' 2>/dev/null)" ]]; then
+              jj describe "$revision" -m "chore: release $tag" --no-pager --color=never
+            fi
+          elif ! git diff --quiet || ! git diff --cached --quiet; then
+            git add -A
+            git commit -m "chore: release $tag"
+          fi
+
           if [[ $validate -eq 1 ]]; then
             nix flake check --no-write-lock-file
             nix run .#ci-test

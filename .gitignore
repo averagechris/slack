@@ -13,7 +13,5 @@ tokens.json
 .mcp.json
 opencode.jsonc
 
-.review-gauntlet/*
-!.review-gauntlet/checkpoints/
 dist/
 result*
