@@ -38,11 +38,15 @@ hosted downloads from the current Pages manifest, regenerates the downloads
 page, and publishes it with `hut pages publish`. It uses build-scoped OAuth
 (`pages.sr.ht/PAGES:RW`) rather than a checked-in token.
 
+The manifest lives at `builds/release-linux-x86_64.yml` (not `.builds/`),
+so SourceHut does **not** auto-run it on every push — releases (and Pages
+republishes) happen only when the manifest is submitted explicitly.
+
 Submit the release build after `prepare-release` has updated
-`.builds/release-linux-x86_64.yml` for the new version:
+`builds/release-linux-x86_64.yml` for the new version:
 
 ```bash
-hut builds submit .builds/release-linux-x86_64.yml \
+hut builds submit builds/release-linux-x86_64.yml \
   --note "slack v0.2.0 linux release" \
   --tags "slack/v0.2.0/release" \
   --visibility unlisted
@@ -92,9 +96,9 @@ nix run .#release -- --version 0.2.0
 Steps, in order:
 
 1. `prepare-release` — writes the version to `Cargo.toml` / `Cargo.lock`,
-   rewrites the `.builds` artifact filenames, and generates a CHANGELOG
-   entry from conventional-commit summaries since the previous `vX.Y.Z` tag
-   (using `jj log`).
+   rewrites the `builds/` manifest artifact filenames, and generates a
+   CHANGELOG entry from conventional-commit summaries since the previous
+   `vX.Y.Z` tag (using `jj log`).
 2. Validation — `nix flake check`, `nix run .#ci-test`,
    `nix run .#ci-clippy` (skippable via `--skip-validate`).
 3. Tagging — `nix run .#release-tag` creates `vX.Y.Z` via `jj tag set`
@@ -106,7 +110,7 @@ Steps, in order:
 5. Pages — `nix run .#build-pages -- --include-existing-downloads`
    (skippable via `--skip-pages`); publish with `--publish-pages`.
 6. Linux build — pass `--submit-linux-build` to submit
-   `.builds/release-linux-x86_64.yml` with `hut builds submit`.
+   `builds/release-linux-x86_64.yml` with `hut builds submit`.
 
 The helper commands above are flake-provided `writeShellApplication`
 outputs; there are no standalone release scripts to run directly.

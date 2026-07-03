@@ -42,7 +42,7 @@ recorded in AGENTS.md.
 | D2 | **Keyring-only token storage** | Remove `FileTokenStore` persistence and `SLACK_TOKEN` env auth. Encrypted export/import remains the migration path between machines. Env-auth tests are refactored or dropped; follow with a coverage pass |
 | D3 | **clap migration before feature work** | Deletes hand-rolled parsing and `introspection.rs`; introspection commands rebuilt on top of clap's command model |
 | D4 | **Keep:** encrypted export/import, agent skills system, introspection, cloudflared tunnel login, idempotency store. **Drop:** ngrok (dead code), `demo` command, dead demo functions, `agent-skills-rs` dep | Tunnel login keeps S4 mitigations and gets the state-mismatch-abort fix |
-| D5 | **Full linear-cli release pipeline** | Flake apps (`ci-*`, `release`, `prepare-release`, `release-tag`, `build-pages`, `publish-pages`, `fetch-upstream`), SourceHut Pages downloads site, `.builds/release-linux-x86_64.yml` with build-scoped OAuth grant, reproducible tarballs |
+| D5 | **Full linear-cli release pipeline** | Flake apps (`ci-*`, `release`, `prepare-release`, `release-tag`, `build-pages`, `publish-pages`, `fetch-upstream`), SourceHut Pages downloads site, `builds/release-linux-x86_64.yml` with build-scoped OAuth grant, reproducible tarballs |
 | D6 | **Dual license MIT OR Apache-2.0** | Upstream code stays MIT; new contributions dual-licensed. `LICENSE` pointer + `LICENSE-MIT` + `LICENSE-APACHE` |
 | D7 | **No hosted PR CI** | Local validation via `nix flake check` + flake apps, gated by `.jj-lint.toml`. SourceHut builds for releases only |
 | D8 | Conventional commits; semver via commit types; auto-generated CHANGELOG | `!`/`BREAKING CHANGE` → major, `feat:` → minor, else patch |
@@ -109,7 +109,7 @@ recorded in AGENTS.md.
 - [x] `release-artifact` reproducible tarballs (+ sha256, manifest.json)
 - [x] `prepare-release`, `release-tag`, `build-pages`, `publish-pages`,
       `release` orchestrator flake apps
-- [x] `.builds/release-linux-x86_64.yml`, SourceHut Pages site
+- [x] `builds/release-linux-x86_64.yml`, SourceHut Pages site
 - [x] `CHANGELOG.md` seeded
 - [x] First tagged release `v0.2.0` cut and published
 
