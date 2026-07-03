@@ -71,7 +71,7 @@ recorded in AGENTS.md.
       `agent-skills-rs` dep, ngrok module
 - [x] Rewrite AGENTS.md: fork policy, failure modes, upstream review watermark
 - [x] Fix docs drift (commands.md, CONTRIBUTING.md) or prune to accurate set
-- [ ] Point `origin` at `git.sr.ht/~averagechris/slack`, GitHub as `upstream`
+- [x] Point `origin` at `git.sr.ht/~averagechris/slack`, GitHub as `upstream`
 
 ### Nix packaging & dev environment
 - [x] `flake.nix` (linear-cli pattern): `buildRustPackage` + `cargoLock`,
@@ -79,38 +79,39 @@ recorded in AGENTS.md.
       -machete, -nextest, rust-analyzer, alejandra, nixd, jj), alejandra formatter
 - [x] Flake apps: `ci-fmt`, `ci-clippy`, `ci-test`, `fetch-upstream`
 - [x] `.envrc` (`use flake`, git-ignored), `.jj-lint.toml` (clippy gate)
-- [ ] `nix flake check` green
+- [x] `nix flake check` green
 
 ### Security hardening
 - [x] Keyring-only `TokenStore` (macOS Keychain + Linux secret-service);
       delete file persistence + `SLACK_TOKEN` auth; one-time migration
       command from `tokens.json` (then shred it)
 - [x] Refactor/drop `SLACK_TOKEN` env tests; keep in-memory store for tests
-- [ ] S3: use stored KDF params in `derive_key`
-- [ ] S4/S5: callback server fixes (ignore wrong state, constant-time compare,
+- [x] S3: use stored KDF params in `derive_key`
+- [x] S4/S5: callback server fixes (ignore wrong state, constant-time compare,
       URL decode, no state in errors)
 - [x] S6: remove `--client-secret` raw flag
-- [ ] S7: 0600 `profiles.json`; atomic 0600 creation for export/import files
+- [x] S7: 0600 `profiles.json`; atomic 0600 creation for export/import files
 
 ### clap migration
-- [ ] Rebuild CLI on clap derive; preserve command surface, flags, exit codes
-- [ ] Rebuild `commands --json` / `schema` / `--help --json` from clap's model
+- [x] Rebuild CLI on clap derive; preserve command surface, flags, exit codes
+- [x] Rebuild `commands --json` / `schema` / `--help --json` from clap's model
       (delete `introspection.rs`)
-- [ ] Delete hand-rolled parsing in `main.rs` / `cli/mod.rs` / `handlers.rs`
-- [ ] Shell completions (clap_complete)
-- [ ] Integration tests assert CLI surface parity before/after
+- [x] Delete hand-rolled parsing in `main.rs` / `cli/mod.rs` / `handlers.rs`
+- [x] Shell completions (clap_complete)
+- [x] Integration tests assert CLI surface parity before/after
 
 ### Reliability & coverage
-- [ ] Q7: 429 retry/backoff in `call_method` (wrapper commands)
+- [x] Q7: 429 retry/backoff in `call_method` (wrapper commands)
 - [ ] Coverage pass: OAuth callback server happy path, handler/dispatch paths,
       login orchestration; shore up gaps opened by keyring/env-auth removal
 
 ### Release pipeline
-- [ ] `release-artifact` reproducible tarballs (+ sha256, manifest.json)
-- [ ] `prepare-release`, `release-tag`, `build-pages`, `publish-pages`,
+- [x] `release-artifact` reproducible tarballs (+ sha256, manifest.json)
+- [x] `prepare-release`, `release-tag`, `build-pages`, `publish-pages`,
       `release` orchestrator flake apps
-- [ ] `.builds/release-linux-x86_64.yml`, SourceHut Pages site
-- [ ] `CHANGELOG.md` seeded; first tagged release `v0.2.0`
+- [x] `.builds/release-linux-x86_64.yml`, SourceHut Pages site
+- [x] `CHANGELOG.md` seeded
+- [ ] First tagged release `v0.2.0` cut and published
 
 ### Feature backlog (post-bootstrap, as team needs emerge)
 - [ ] `--blocks` (Block Kit) on `msg post`

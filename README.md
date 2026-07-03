@@ -16,16 +16,38 @@ Key features:
 
 ## Installation
 
+### Hosted downloads
+
+Prebuilt, reproducible release tarballs (with SHA-256 checksums) are
+published at <https://averagechris.srht.site/slack/>:
+
 ```bash
-nix run sourcehut:~averagechris/slack -- --help
+curl -LO https://averagechris.srht.site/slack/downloads/slack-vX.Y.Z-<platform>.tar.gz
+curl -LO https://averagechris.srht.site/slack/downloads/slack-vX.Y.Z-<platform>.tar.gz.sha256
+sha256sum -c slack-vX.Y.Z-<platform>.tar.gz.sha256
+tar -xzf slack-vX.Y.Z-<platform>.tar.gz
+install -m 0755 slack-vX.Y.Z-<platform>/slack ~/.local/bin/slack
 ```
 
-Prebuilt release tarballs will be published at
-<https://averagechris.srht.site/slack/> (coming soon).
+### Nix
 
-Or build from source: `git clone https://git.sr.ht/~averagechris/slack`,
-then `cargo build --release`. See [docs/authentication.md](docs/authentication.md)
-for prerequisites (Rust 1.70+, Slack App credentials).
+Run directly from the SourceHut flake, or install into your profile:
+
+```bash
+nix run sourcehut:~averagechris/slack -- --help
+nix profile install sourcehut:~averagechris/slack
+```
+
+### From source
+
+```bash
+git clone https://git.sr.ht/~averagechris/slack
+cd slack
+nix build            # or: cargo build --release
+```
+
+See [docs/authentication.md](docs/authentication.md) for prerequisites
+(Slack App credentials) and first-login setup.
 
 ## Agent Skills
 
@@ -153,6 +175,24 @@ securely deleted afterwards).
 - **Rate limiting**: Automatic retry with exponential backoff + jitter
 
 For full security specification, see [docs/security.md](docs/security.md).
+
+## Development
+
+The Nix flake is the single source of truth for building, testing, and
+releasing:
+
+```bash
+nix develop            # dev shell (cargo, clippy, rust-analyzer, jj, ...)
+nix flake check        # build + fmt checks + release artifact
+nix run .#ci-fmt       # rustfmt + alejandra format check
+nix run .#ci-clippy    # clippy, warnings denied
+nix run .#ci-test      # cargo test --locked
+```
+
+There is no hosted PR CI; validation is local via the commands above.
+Releases (reproducible tarballs, SourceHut Pages downloads site, jj tags,
+changelog generation) are driven by the `release` flake app — see
+[docs/downloads.md](docs/downloads.md) for the full release process.
 
 ## Contributing
 
