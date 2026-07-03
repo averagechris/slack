@@ -30,7 +30,7 @@ pub async fn react_add(
 
     // Build hint with example command for non-interactive mode
     let hint = format!(
-        "Example: slack-rs react add {} {} {} --yes",
+        "Example: slack react add {} {} {} --yes",
         channel, timestamp, name
     );
     confirm_destructive_with_hint(yes, "add this reaction", non_interactive, Some(&hint))?;
@@ -68,7 +68,7 @@ pub async fn react_remove(
 
     // Build hint with example command for non-interactive mode
     let hint = format!(
-        "Example: slack-rs react remove {} {} {} --yes",
+        "Example: slack react remove {} {} {} --yes",
         channel, timestamp, name
     );
     confirm_destructive_with_hint(yes, "remove this reaction", non_interactive, Some(&hint))?;

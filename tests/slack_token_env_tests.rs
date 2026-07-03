@@ -5,8 +5,8 @@
 
 use httpmock::prelude::*;
 use serde_json::json;
-use slack_rs::cli::get_api_client_with_token_type;
-use slack_rs::profile::{save_config, Profile, ProfilesConfig};
+use slack::cli::get_api_client_with_token_type;
+use slack::profile::{save_config, Profile, ProfilesConfig};
 use std::env;
 use tempfile::TempDir;
 
@@ -137,7 +137,7 @@ async fn test_slack_token_takes_precedence_over_token_type_flag() {
     // Try to get API client with explicit token type (should still use SLACK_TOKEN)
     let client_result = get_api_client_with_token_type(
         Some("default".to_string()),
-        Some(slack_rs::profile::TokenType::User),
+        Some(slack::profile::TokenType::User),
     )
     .await;
 
@@ -182,7 +182,7 @@ async fn test_fallback_to_token_store_when_slack_token_not_set() {
 #[test]
 fn test_command_response_with_token_type_metadata() {
     use serde_json::json;
-    use slack_rs::api::CommandResponse;
+    use slack::api::CommandResponse;
 
     // Test that CommandResponse::with_token_type includes token_type in metadata
     let response = CommandResponse::with_token_type(
@@ -202,7 +202,7 @@ fn test_command_response_with_token_type_metadata() {
 #[test]
 fn test_command_response_with_user_token_type_metadata() {
     use serde_json::json;
-    use slack_rs::api::CommandResponse;
+    use slack::api::CommandResponse;
 
     // Test that CommandResponse::with_token_type works with user token type
     let response = CommandResponse::with_token_type(
@@ -222,7 +222,7 @@ fn test_command_response_with_user_token_type_metadata() {
 #[test]
 fn test_command_response_without_token_type_metadata() {
     use serde_json::json;
-    use slack_rs::api::CommandResponse;
+    use slack::api::CommandResponse;
 
     // Test that CommandResponse::with_token_type with None doesn't include token_type
     let response = CommandResponse::with_token_type(

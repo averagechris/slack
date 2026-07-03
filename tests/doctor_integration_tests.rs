@@ -1,4 +1,4 @@
-use slack_rs::profile::{save_config, Profile, ProfilesConfig};
+use slack::profile::{save_config, Profile, ProfilesConfig};
 use std::env;
 use std::fs;
 use tempfile::TempDir;
@@ -37,8 +37,8 @@ fn setup_test_env() -> (TempDir, String) {
     save_config(&config_path, &config).unwrap();
 
     // Create token store with dummy tokens
-    let token_store = slack_rs::profile::create_token_store().unwrap();
-    let bot_key = slack_rs::profile::make_token_key("T123ABC", "U456DEF");
+    let token_store = slack::profile::create_token_store().unwrap();
+    let bot_key = slack::profile::make_token_key("T123ABC", "U456DEF");
     let user_key = format!("{}_user", bot_key);
 
     // Store tokens with realistic-looking values
@@ -57,13 +57,13 @@ fn test_doctor_output_does_not_contain_token_values() {
     let (_temp_dir, _config_path) = setup_test_env();
 
     // Verify that the diagnostic structures can't hold token values by design
-    let info = slack_rs::commands::doctor::DiagnosticInfo {
+    let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/test/path".to_string(),
-        token_store: slack_rs::commands::doctor::TokenStoreInfo {
+        token_store: slack::commands::doctor::TokenStoreInfo {
             backend: "file".to_string(),
             path: "/test/tokens.json".to_string(),
         },
-        tokens: slack_rs::commands::doctor::TokenStatus {
+        tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
             user_token_exists: true,
         },
@@ -88,13 +88,13 @@ fn test_doctor_output_does_not_contain_token_values() {
 
 #[test]
 fn test_doctor_json_output_schema() {
-    let info = slack_rs::commands::doctor::DiagnosticInfo {
+    let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/home/user/.config/slack-rs/profiles.json".to_string(),
-        token_store: slack_rs::commands::doctor::TokenStoreInfo {
+        token_store: slack::commands::doctor::TokenStoreInfo {
             backend: "file".to_string(),
             path: "/home/user/.local/share/slack-rs/tokens.json".to_string(),
         },
-        tokens: slack_rs::commands::doctor::TokenStatus {
+        tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
             user_token_exists: false,
         },
@@ -125,13 +125,13 @@ fn test_doctor_json_output_schema() {
 
 #[test]
 fn test_doctor_json_output_omits_empty_scope_hints() {
-    let info = slack_rs::commands::doctor::DiagnosticInfo {
+    let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/test/path".to_string(),
-        token_store: slack_rs::commands::doctor::TokenStoreInfo {
+        token_store: slack::commands::doctor::TokenStoreInfo {
             backend: "file".to_string(),
             path: "/test/tokens.json".to_string(),
         },
-        tokens: slack_rs::commands::doctor::TokenStatus {
+        tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
             user_token_exists: true,
         },
@@ -147,7 +147,7 @@ fn test_doctor_json_output_omits_empty_scope_hints() {
 
 #[test]
 fn test_token_status_only_contains_existence_flags() {
-    let status = slack_rs::commands::doctor::TokenStatus {
+    let status = slack::commands::doctor::TokenStatus {
         bot_token_exists: true,
         user_token_exists: false,
     };
@@ -181,7 +181,7 @@ fn test_diagnostic_info_deserialization() {
         "scopeHints": ["Hint 1", "Hint 2"]
     }"#;
 
-    let info: slack_rs::commands::doctor::DiagnosticInfo = serde_json::from_str(json).unwrap();
+    let info: slack::commands::doctor::DiagnosticInfo = serde_json::from_str(json).unwrap();
 
     assert_eq!(info.config_path, "/test/profiles.json");
     assert_eq!(info.token_store.backend, "file");

@@ -64,13 +64,13 @@ recorded in AGENTS.md.
 ## Backlog
 
 ### Repo bootstrap
-- [ ] Rename package/binary to `slack`; add `config/cli.toml`
-- [ ] Dual-license: `LICENSE` pointer, `LICENSE-MIT`, `LICENSE-APACHE`, Cargo.toml
-- [ ] Delete cruft: `.review-gauntlet/`, `.serena/`, `.wt/`, `openspec/`,
+- [x] Rename package/binary to `slack`; add `config/cli.toml`
+- [x] Dual-license: `LICENSE` pointer, `LICENSE-MIT`, `LICENSE-APACHE`, Cargo.toml
+- [x] Delete cruft: `.review-gauntlet/`, `.serena/`, `.wt/`, `openspec/`,
       `.github/workflows/` contents, `Formula/`, `demo` command + dead demo fns,
       `agent-skills-rs` dep, ngrok module
-- [ ] Rewrite AGENTS.md: fork policy, failure modes, upstream review watermark
-- [ ] Fix docs drift (commands.md, CONTRIBUTING.md) or prune to accurate set
+- [x] Rewrite AGENTS.md: fork policy, failure modes, upstream review watermark
+- [x] Fix docs drift (commands.md, CONTRIBUTING.md) or prune to accurate set
 - [ ] Point `origin` at `git.sr.ht/~averagechris/slack`, GitHub as `upstream`
 
 ### Nix packaging & dev environment
@@ -89,7 +89,7 @@ recorded in AGENTS.md.
 - [ ] S3: use stored KDF params in `derive_key`
 - [ ] S4/S5: callback server fixes (ignore wrong state, constant-time compare,
       URL decode, no state in errors)
-- [ ] S6: remove `--client-secret` raw flag
+- [x] S6: remove `--client-secret` raw flag
 - [ ] S7: 0600 `profiles.json`; atomic 0600 creation for export/import files
 
 ### clap migration

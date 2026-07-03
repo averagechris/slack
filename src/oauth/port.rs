@@ -23,7 +23,7 @@ pub const OAUTH_PORT_ENV: &str = "SLACK_OAUTH_PORT";
 ///
 /// # Examples
 /// ```
-/// use slack_rs::oauth::resolve_callback_port;
+/// use slack::oauth::resolve_callback_port;
 ///
 /// // With default (no env var set)
 /// let port = resolve_callback_port().unwrap();

@@ -1,358 +1,171 @@
-# Command Specification
+# Command Reference
+
+Reference for the `slack` CLI command surface. Verified against the current
+hand-rolled parser (a clap migration is planned; see `docs/roadmap.md`).
 
 ## Global Flags
 
-All commands support these global flags:
+These flags work in any position:
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--profile <name>` | String | (required) | Profile name to use |
-| `--format <fmt>` | Enum | `json` | Output format: `json` or `text` |
-| `--lang <tag>` | String | (auto) | Language for messages: `en`, `ja`, etc. |
-| `--no-color` | Bool | `false` | Disable colored output |
-| `--debug` | Bool | `false` | Enable debug logging (tokens masked) |
-| `--allow-write` | Bool | `false` | Enable write operations |
+| Flag | Description |
+|------|-------------|
+| `--profile <name>` / `--profile=<name>` | Profile to use (default: `default`; also `SLACK_PROFILE` env) |
+| `--non-interactive` | Run without interactive prompts (auto-enabled when stdin is not a TTY) |
+| `--debug` | Show debug information (tokens redacted) |
+| `--trace` | Show verbose trace information |
+
+Write operations are gated by the `SLACKCLI_ALLOW_WRITE` environment variable
+(default: `true`), not a CLI flag. Set `SLACKCLI_ALLOW_WRITE=false` to block
+writes.
+
+Output format defaults to a unified JSON envelope `{response, meta}`. Use
+`--raw` (on commands that support it) or `SLACKRS_OUTPUT=raw` for the raw
+Slack API response.
 
 ## Command Structure
 
 ```
-slack-rs [GLOBAL_FLAGS] <COMMAND> [SUBCOMMAND] [OPTIONS]
+slack [--non-interactive] <COMMAND> [SUBCOMMAND] [ARGS] [OPTIONS]
+```
+
+Machine-readable introspection:
+
+```bash
+slack commands --json                             # List all commands
+slack <command> --help --json                     # Per-command help as JSON
+slack schema --command <cmd> --output json-schema # JSON schema for a command
 ```
 
 ## Commands
 
-### `auth` - Authentication Management
+### `auth` — Authentication Management
 
-#### `auth login`
-Authenticate with a Slack workspace via OAuth.
-
-**Usage:**
 ```bash
-slack-rs auth login --profile <name>
+slack auth login [profile] [--client-id <id>] [--bot-scopes <scopes>]
+                 [--user-scopes <scopes>] [--cloudflared [path]]
+slack auth status [profile]
+slack auth list
+slack auth rename <old> <new>
+slack auth logout [profile]
+slack auth export [--profile <name> | --all] --out <file>
+                  (--passphrase-env <VAR> | --passphrase-prompt) --yes
+slack auth import --in <file> (--passphrase-env <VAR> | --passphrase-prompt)
+                  [--yes] [--force] [--dry-run] [--json]
 ```
 
-**Options:**
-- `--profile <name>` (required): Profile name to create/update
+- `--cloudflared` uses the manifest-first tunnel login flow: a temporary
+  cloudflared tunnel serves the OAuth callback, an App Manifest is generated,
+  and credentials are collected after you create the Slack App.
+- Scopes are comma-separated, or `all` for the comprehensive preset.
+- Export/import files are encrypted (AES-256-GCM + Argon2id).
 
-**Behavior:**
-1. Check if profile already exists
-2. Start OAuth flow (PKCE + localhost callback)
-3. Open browser for user authorization
-4. Exchange code for token
-5. Store token in file storage
-6. Save profile metadata to `profiles.json`
+### `config` — Profile OAuth Configuration
 
-**Output (JSON):**
-```json
-{
-  "ok": true,
-  "profile_name": "acme-work",
-  "team_id": "T123ABC",
-  "team_name": "Acme Corp",
-  "user_id": "U456DEF",
-  "scopes": ["search:read", "channels:read", "chat:write"]
-}
-```
-
----
-
-#### `auth status`
-Show authentication status for a profile.
-
-**Usage:**
 ```bash
-slack-rs auth status --profile <name>
+slack config oauth set <profile> --client-id <id> --redirect-uri <uri> --scopes <scopes>
+                       [--client-secret-env <VAR>] [--client-secret-file <PATH>]
+slack config oauth show <profile>
+slack config oauth delete <profile>
+slack config set <profile> --token-type <bot|user>
 ```
 
-**Output (JSON):**
-```json
-{
-  "profile_name": "acme-work",
-  "team_id": "T123ABC",
-  "team_name": "Acme Corp",
-  "user_id": "U456DEF",
-  "user_name": "john.doe",
-  "scopes": ["search:read", "channels:read", "chat:write"],
-  "created_at": "2026-02-03T10:30:00Z",
-  "last_used_at": "2026-02-03T15:45:00Z",
-  "token_valid": true
-}
-```
+Client secret sources, in priority order: `--client-secret-env`, the
+`SLACKRS_CLIENT_SECRET` environment variable, `--client-secret-file`,
+interactive prompt. There is intentionally no raw `--client-secret` flag.
 
----
+### `api call` — Generic API Access
 
-#### `auth list`
-List all configured profiles.
-
-**Usage:**
 ```bash
-slack-rs auth list
+slack api call <method> [key=value...] [--json] [--get] [--raw]
 ```
 
-**Output (JSON):**
-```json
-{
-  "profiles": [
-    {
-      "profile_name": "acme-work",
-      "team_name": "Acme Corp",
-      "team_id": "T123ABC",
-      "user_id": "U456DEF",
-      "last_used_at": "2026-02-03T15:45:00Z"
-    },
-    {
-      "profile_name": "partner-ws",
-      "team_name": "Partner Inc",
-      "team_id": "T789GHI",
-      "user_id": "U012JKL",
-      "last_used_at": "2026-02-02T09:15:00Z"
-    }
-  ]
-}
-```
+- `<method>`: any Slack Web API method (e.g. `chat.postMessage`)
+- `key=value`: request parameters (form-urlencoded by default)
+- `--json`: send parameters as a JSON body
+- `--get`: use GET instead of POST
+- `--raw`: output raw Slack API response (no envelope)
 
----
+Includes automatic 429 retry with Retry-After/backoff.
 
-#### `auth rename`
-Rename a profile.
+### `search` — Search Messages
 
-**Usage:**
 ```bash
-slack-rs auth rename --profile <old> --to <new>
+slack search <query> [--count=N] [--page=N] [--sort=TYPE] [--sort_dir=DIR]
 ```
 
-**Options:**
-- `--profile <old>` (required): Current profile name
-- `--to <new>` (required): New profile name
+Requires a user token (`search:read` user scope).
 
-**Behavior:**
-- Updates `profile_name` in `profiles.json`
-- Does not affect file storage entry (keyed by `team_id:user_id`)
+### `conv` — Conversations
 
----
-
-#### `auth logout`
-Remove authentication for a profile.
-
-**Usage:**
 ```bash
-slack-rs auth logout --profile <name>
+slack conv list [--filter=KEY:VALUE]... [--format=FORMAT] [--sort=FIELD]
+                [--sort-dir=DIR] [--types=TYPES] [--limit=N] [--include-private]
+slack conv search <pattern> [--select]
+slack conv select
+slack conv history <channel> [--limit=N] [--oldest=TS] [--latest=TS]
+slack conv history --interactive [--filter=KEY:VALUE]...
 ```
 
-**Behavior:**
-1. Delete token from file storage
-2. Remove profile from `profiles.json`
+### `thread` — Threads
 
----
-
-### `api` - Generic API Access
-
-#### `api call`
-Call any Slack Web API method.
-
-**Usage:**
 ```bash
-slack-rs --profile <name> api call <method> [key=value...] [--json '{...}']
+slack thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw]
+                 [--token-type=bot|user]
 ```
 
-**Arguments:**
-- `<method>`: Slack API method (e.g., `search.messages`, `conversations.history`)
-- `[key=value...]`: Form parameters (e.g., `channel=C123 limit=50`)
+### `users` — User Information
 
-**Options:**
-- `--json <json>`: Send JSON body instead of form parameters
-- `--get`: Use GET instead of POST (default: POST)
-
-**Examples:**
 ```bash
-# Form parameters (default)
-slack-rs --profile acme api call search.messages query="invoice" count=20
-
-# JSON body
-slack-rs --profile acme api call chat.postMessage --json '{
-  "channel": "C123",
-  "text": "Hello"
-}'
-
-# GET request
-slack-rs --profile acme api call users.info --get user=U456
+slack users info <user_id>
+slack users cache-update [--force]
+slack users resolve-mentions <text> [--format=FORMAT]
 ```
 
-**Output:**
-Raw Slack API response wrapped with metadata:
-```json
-{
-  "meta": {
-    "profile_name": "acme-work",
-    "team_id": "T123ABC",
-    "team_name": "Acme Corp",
-    "user_id": "U456DEF",
-    "method": "search.messages"
-  },
-  "response": {
-    "ok": true,
-    "messages": { ... }
-  }
-}
-```
+### `msg` — Message Operations (write-gated)
 
----
-
-### `search` - Search Messages
-
-**Usage:**
 ```bash
-slack-rs --profile <name> search <query> [OPTIONS]
+slack msg post <channel> <text> [--thread-ts=TS] [--reply-broadcast] [--yes]
+               [--token-type=bot|user] [--idempotency-key=KEY]
+slack msg update <channel> <ts> <text> [--yes] [--idempotency-key=KEY]
+slack msg delete <channel> <ts> [--yes] [--idempotency-key=KEY]
 ```
 
-**Arguments:**
-- `<query>`: Search query (Slack search syntax)
+- Requires `SLACKCLI_ALLOW_WRITE=true` (the default).
+- `--yes` confirms destructive operations in non-interactive mode.
+- `--idempotency-key` prevents duplicate writes on retries.
 
-**Options:**
-- `--limit <n>`: Maximum results (default: 20)
-- `--sort <field>`: Sort by `timestamp` or `score` (default: `score`)
-- `--order <dir>`: Sort order `asc` or `desc` (default: `desc`)
+### `react` — Reactions (write-gated)
 
-**Example:**
 ```bash
-slack-rs --profile acme search "invoice in:#finance" --limit 50 --sort timestamp
+slack react add <channel> <ts> <emoji> [--yes] [--idempotency-key=KEY]
+slack react remove <channel> <ts> <emoji> [--yes] [--idempotency-key=KEY]
 ```
 
----
+### `file` — Files
 
-### `conv` - Conversations
-
-#### `conv list`
-List conversations (channels, DMs, etc.).
-
-**Usage:**
 ```bash
-slack-rs --profile <name> conv list [OPTIONS]
+slack file upload <path> [--channel=ID] [--channels=IDs] [--title=TITLE]
+                  [--comment=TEXT] [--yes] [--idempotency-key=KEY]
+slack file download [<file_id>] [--url=URL] [--out=PATH]
 ```
 
-**Options:**
-- `--types <types>`: Comma-separated types: `public_channel`, `private_channel`, `im`, `mpim` (default: all)
-- `--limit <n>`: Maximum results (default: 100)
+### `doctor` — Diagnostics
 
----
-
-#### `conv history`
-Fetch conversation history.
-
-**Usage:**
 ```bash
-slack-rs --profile <name> conv history --channel <id> [OPTIONS]
+slack doctor [--profile=NAME] [--json]
 ```
 
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--oldest <ts>`: Oldest timestamp (inclusive)
-- `--latest <ts>`: Latest timestamp (exclusive)
-- `--limit <n>`: Maximum messages (default: 100)
+Shows profile config path, token store backend/path, token availability,
+and scope hints.
 
----
+### `install-skills` — Agent Skills
 
-### `users` - User Information
-
-#### `users info`
-Get user information.
-
-**Usage:**
 ```bash
-slack-rs --profile <name> users info --user <id>
+slack install-skills [source] [--global] [--json]
 ```
 
-**Options:**
-- `--user <id>` (required): User ID
-
----
-
-### `msg` - Message Operations
-
-**All `msg` commands require `--allow-write` flag.**
-
-#### `msg post`
-Post a new message.
-
-**Usage:**
-```bash
-slack-rs --profile <name> --allow-write msg post --channel <id> --text <text> [OPTIONS]
-```
-
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--text <text>` (required): Message text
-- `--thread-ts <ts>`: Reply to thread
-
----
-
-#### `msg update`
-Update an existing message.
-
-**Usage:**
-```bash
-slack-rs --profile <name> --allow-write msg update --channel <id> --ts <ts> --text <text>
-```
-
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--ts <ts>` (required): Message timestamp
-- `--text <text>` (required): New message text
-
----
-
-#### `msg delete`
-Delete a message (destructive operation).
-
-**Usage:**
-```bash
-slack-rs --profile <name> --allow-write msg delete --channel <id> --ts <ts> [--yes]
-```
-
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--ts <ts>` (required): Message timestamp
-- `--yes`: Skip confirmation prompt
-
-**Behavior:**
-- Without `--yes`: Display confirmation prompt
-- With `--yes`: Delete immediately
-
----
-
-### `react` - Reactions
-
-**All `react` commands require `--allow-write` flag.**
-
-#### `react add`
-Add a reaction to a message.
-
-**Usage:**
-```bash
-slack-rs --profile <name> --allow-write react add --channel <id> --ts <ts> --emoji <emoji>
-```
-
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--ts <ts>` (required): Message timestamp
-- `--emoji <emoji>` (required): Emoji name (e.g., `:thumbsup:`)
-
----
-
-#### `react remove`
-Remove a reaction from a message.
-
-**Usage:**
-```bash
-slack-rs --profile <name> --allow-write react remove --channel <id> --ts <ts> --emoji <emoji>
-```
-
-**Options:**
-- `--channel <id>` (required): Channel ID
-- `--ts <ts>` (required): Message timestamp
-- `--emoji <emoji>` (required): Emoji name
-
----
+Installs the embedded agent skill docs (default source: `self`; also
+supports `local:<path>`).
 
 ## Exit Codes
 
@@ -360,24 +173,24 @@ slack-rs --profile <name> --allow-write react remove --channel <id> --ts <ts> --
 |------|---------|
 | 0 | Success |
 | 1 | General error (invalid arguments, API error, etc.) |
-| 2 | Authentication error (missing/invalid token) |
-| 3 | Permission error (missing scope, write not allowed) |
-| 4 | Rate limit exceeded (after retries) |
+| 2 | Non-interactive error (interactive input required but unavailable) |
 
-## Output Formats
+## Output
 
-### JSON (default)
-- Machine-readable
-- Always includes `meta` block with profile/team/user context
-- Suitable for piping to `jq`, scripts, etc.
+All commands output JSON with the unified envelope:
 
-### Text
-- Human-readable summary
-- Shows key information only
-- Always includes workspace identifier
-- Example:
-  ```
-  [acme-work / Acme Corp] Message posted successfully
-  Channel: #general (C123ABC)
-  Timestamp: 1234567890.123456
-  ```
+```json
+{
+  "response": { "ok": true, "...": "..." },
+  "meta": {
+    "profile_name": "default",
+    "team_id": "T123ABC",
+    "user_id": "U456DEF",
+    "method": "conversations.list",
+    "command": "conv list"
+  }
+}
+```
+
+Set `SLACKRS_OUTPUT=raw` (or pass `--raw` where supported) to get the raw
+Slack API response only.

@@ -834,8 +834,8 @@ fn compute_default_token_type_display(
 ///
 /// # Examples
 /// ```
-/// use slack_rs::profile::TokenType;
-/// use slack_rs::auth::commands::compute_initial_default_token_type;
+/// use slack::profile::TokenType;
+/// use slack::auth::commands::compute_initial_default_token_type;
 ///
 /// // New profile with user token -> User
 /// assert_eq!(
@@ -1083,11 +1083,10 @@ pub struct ExtendedLoginOptions {
     pub bot_scopes: Option<Vec<String>>,
     pub user_scopes: Option<Vec<String>>,
     pub cloudflared_path: Option<String>,
-    pub ngrok_path: Option<String>,
     pub base_url: Option<String>,
 }
 
-/// Extended login with cloudflared/ngrok tunnel support (manifest-first flow)
+/// Extended login with cloudflared tunnel support (manifest-first flow)
 ///
 /// This function handles OAuth flow with tunnel support for public redirect URIs.
 /// The flow is manifest-first: tunnel is started, manifest is generated and shown

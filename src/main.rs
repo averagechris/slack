@@ -1,10 +1,6 @@
 // Use library exports instead of module declarations to avoid duplicate test runs
-use slack_rs::cli::*;
-use slack_rs::profile::{
-    default_config_path, load_config, make_token_key, resolve_profile, save_config,
-    InMemoryTokenStore, Profile, ProfilesConfig, TokenStore,
-};
-use slack_rs::{auth, cli, commands, profile};
+use slack::cli::*;
+use slack::{auth, cli, commands, profile};
 
 #[tokio::main]
 async fn main() {
@@ -145,7 +141,7 @@ async fn main() {
                 println!("Doctor diagnostics command");
                 println!();
                 println!("USAGE:");
-                println!("    slack-rs doctor [OPTIONS]");
+                println!("    slack doctor [OPTIONS]");
                 println!();
                 println!("OPTIONS:");
                 println!("    --profile=<name>    Profile to diagnose (default: 'default')");
@@ -160,9 +156,9 @@ async fn main() {
                 println!("    - Scope hints for common permission issues");
                 println!();
                 println!("EXAMPLES:");
-                println!("    slack-rs doctor");
-                println!("    slack-rs doctor --profile=work");
-                println!("    slack-rs doctor --json");
+                println!("    slack doctor");
+                println!("    slack doctor --profile=work");
+                println!("    slack doctor --json");
                 return;
             }
 
@@ -179,11 +175,6 @@ async fn main() {
                 handle_command_error(&e, "Skill installation failed");
             }
         }
-        "demo" => {
-            println!("Slack CLI - OAuth authentication flow");
-            println!();
-        }
-
         "--help" | "-h" => {
             // Check for --json flag
             if cli::has_flag(&args, "--json") {
@@ -205,8 +196,8 @@ async fn main() {
 /// This allows --profile and --non-interactive to work in any position
 ///
 /// For example:
-/// - `slack-rs --profile work api call ...` becomes `slack-rs api call ... --profile work`
-/// - `slack-rs --non-interactive --profile test search query` becomes `slack-rs search query --non-interactive --profile test`
+/// - `slack --profile work api call ...` becomes `slack api call ... --profile work`
+/// - `slack --non-interactive --profile test search query` becomes `slack search query --non-interactive --profile test`
 fn normalize_global_flags(args: &[String]) -> Vec<String> {
     if args.len() < 2 {
         return args.to_vec();
@@ -539,7 +530,7 @@ fn print_help() {
     println!("Slack CLI");
     println!();
     println!("USAGE:");
-    println!("    slack-rs [--non-interactive] [COMMAND] [OPTIONS]");
+    println!("    slack [--non-interactive] [COMMAND] [OPTIONS]");
     println!();
     println!("GLOBAL OPTIONS:");
     println!("    --non-interactive              Run without interactive prompts (auto-enabled when stdin is not a TTY)");
@@ -583,7 +574,6 @@ fn print_help() {
     );
     println!("    doctor [--profile=NAME] [--json] Show diagnostic information");
     println!("    install-skills [source] [--global] Install agent skill (default: self)");
-    println!("    demo                             Run demonstration");
     println!();
     println!("API CALL OPTIONS:");
     println!("    <method>                         Slack API method (e.g., chat.postMessage)");
@@ -606,16 +596,16 @@ fn print_help() {
     println!();
     println!("EXAMPLES:");
     println!("    # Profile selection");
-    println!("    SLACK_PROFILE=work slack-rs conv list  # Use 'work' profile");
-    println!("    slack-rs msg post C123 \"Hello\" --profile=work  # Use 'work' profile via flag");
+    println!("    SLACK_PROFILE=work slack conv list  # Use 'work' profile");
+    println!("    slack msg post C123 \"Hello\" --profile=work  # Use 'work' profile via flag");
     println!();
     println!("    # API calls");
-    println!("    slack-rs api call users.info user=U123456 --get");
-    println!("    slack-rs api call chat.postMessage channel=C123 text=Hello --debug");
-    println!("    slack-rs api call chat.postMessage --json channel=C123 text=Hello");
+    println!("    slack api call users.info user=U123456 --get");
+    println!("    slack api call chat.postMessage channel=C123 text=Hello --debug");
+    println!("    slack api call chat.postMessage --json channel=C123 text=Hello");
     println!();
     println!("    # Output control");
-    println!("    SLACKRS_OUTPUT=raw slack-rs conv list  # Raw output without envelope");
+    println!("    SLACKRS_OUTPUT=raw slack conv list  # Raw output without envelope");
 }
 
 fn print_usage() {
@@ -661,7 +651,6 @@ fn print_usage() {
     );
     println!("  doctor [options]               - Show diagnostic information (supports --profile, --json)");
     println!("  install-skills [source] [--global] - Install agent skill (default: self, supports local:<path>)");
-    println!("  demo                           - Run demonstration");
     println!("  --help, -h                     - Show help");
     println!("  --version, -v                  - Show version");
 }
@@ -684,9 +673,9 @@ fn print_api_usage() {
     println!("    With --raw or SLACKRS_OUTPUT=raw: Raw Slack API response only");
     println!();
     println!("EXAMPLES:");
-    println!("    slack-rs api call users.info user=U123456 --get");
-    println!("    slack-rs api call chat.postMessage channel=C123 text=Hello --debug");
-    println!("    SLACKRS_OUTPUT=raw slack-rs api call conversations.list");
+    println!("    slack api call users.info user=U123456 --get");
+    println!("    slack api call chat.postMessage channel=C123 text=Hello --debug");
+    println!("    SLACKRS_OUTPUT=raw slack api call conversations.list");
 }
 
 fn print_auth_usage() {
@@ -705,19 +694,14 @@ fn print_auth_usage() {
     println!("  --user-scopes <scopes>              - User scopes (comma-separated or 'all')");
     println!("  --cloudflared [path]                - Use cloudflared tunnel for redirect URI");
     println!("                                        (path optional, defaults to 'cloudflared' in PATH)");
-    println!("  --ngrok [path]                      - Use ngrok tunnel for redirect URI");
-    println!(
-        "                                        (path optional, defaults to 'ngrok' in PATH)"
-    );
     println!();
     println!("Manifest-first tunnel login flow:");
-    println!("  When --cloudflared or --ngrok is specified:");
+    println!("  When --cloudflared is specified:");
     println!("    1. A temporary tunnel is created for OAuth callback");
     println!("    2. A Slack App Manifest is generated and saved to ~/.config/slack-rs/<profile>_manifest.yml");
     println!("    3. You create the Slack App using the manifest");
     println!("    4. You enter the Client ID and Client Secret from the new app");
     println!("    5. The OAuth flow starts automatically");
-    println!("  Note: --cloudflared and --ngrok cannot be used at the same time.");
     println!();
     println!("Export options:");
     println!(
@@ -764,7 +748,6 @@ fn print_config_oauth_usage(prog: &str) {
     println!("  --client-secret-env <VAR>      Read secret from environment variable");
     println!("  (SLACKRS_CLIENT_SECRET)        Default environment variable (auto-checked)");
     println!("  --client-secret-file <PATH>    Read secret from file");
-    println!("  --client-secret <SECRET>       Direct secret value (requires --yes, unsafe)");
     println!("  (interactive prompt)           Prompt for secret if stdin is a TTY");
     println!();
     println!("  {} config oauth show <profile>", prog);
@@ -799,8 +782,6 @@ fn run_config_oauth_set(args: &[String]) -> Result<(), String> {
     let mut scopes: Option<String> = None;
     let mut client_secret_env: Option<String> = None;
     let mut client_secret_file: Option<String> = None;
-    let mut client_secret: Option<String> = None;
-    let mut confirmed = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -847,15 +828,15 @@ fn run_config_oauth_set(args: &[String]) -> Result<(), String> {
                     }
                 }
                 "--client-secret" => {
-                    i += 1;
-                    if i < args.len() {
-                        client_secret = Some(args[i].clone());
-                    } else {
-                        return Err("--client-secret requires a value".to_string());
-                    }
-                }
-                "--yes" => {
-                    confirmed = true;
+                    return Err(
+                        "--client-secret was removed for security (secrets land in shell history).\n\
+                         Provide the secret via:\n\
+                         - Environment variable: SLACKRS_CLIENT_SECRET=<secret>\n\
+                         - Flag: --client-secret-env <ENV_VAR>\n\
+                         - Flag: --client-secret-file <PATH>\n\
+                         - Interactive prompt (run in a terminal)"
+                            .to_string(),
+                    );
                 }
                 _ => {
                     return Err(format!("Unknown option: {}", args[i]));
@@ -881,8 +862,6 @@ fn run_config_oauth_set(args: &[String]) -> Result<(), String> {
         scopes: scope_str,
         client_secret_env,
         client_secret_file,
-        client_secret,
-        confirmed,
     })
     .map_err(|e| e.to_string())
 }
@@ -944,240 +923,4 @@ fn run_config_set(args: &[String]) -> Result<(), String> {
     let ttype = token_type.ok_or_else(|| "--token-type is required".to_string())?;
 
     commands::set_default_token_type(profile, ttype).map_err(|e| e.to_string())
-}
-
-/// Demonstrates the profile storage functionality
-#[allow(dead_code)]
-fn demonstrate_profile_storage() {
-    println!("=== Profile Storage Demo ===");
-
-    // Get default config path
-    match default_config_path() {
-        Ok(path) => {
-            println!("Config path: {}", path.display());
-
-            // Load existing config or create new
-            match load_config(&path) {
-                Ok(config) => {
-                    println!("Loaded config with {} profiles", config.profiles.len());
-
-                    // List profiles
-                    if !config.profiles.is_empty() {
-                        println!("Profiles:");
-                        for name in config.list_names() {
-                            if let Some(profile) = config.get(&name) {
-                                println!(
-                                    "  - {}: {} ({}:{})",
-                                    name,
-                                    profile.team_name.as_deref().unwrap_or("N/A"),
-                                    profile.team_id,
-                                    profile.user_id
-                                );
-                            }
-                        }
-                    }
-
-                    // Demonstrate profile resolution
-                    if let Some(name) = config.list_names().first() {
-                        match resolve_profile(&path, name) {
-                            Ok((team_id, user_id)) => {
-                                println!("\nResolved '{}' -> {}:{}", name, team_id, user_id);
-                            }
-                            Err(e) => {
-                                println!("\nFailed to resolve profile: {}", e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("Failed to load config: {}", e);
-                }
-            }
-        }
-        Err(e) => {
-            println!("Failed to get config path: {}", e);
-        }
-    }
-    println!();
-}
-
-/// Demonstrates the token storage functionality
-#[allow(dead_code)]
-fn demonstrate_token_storage() {
-    println!("=== Token Storage Demo ===");
-
-    // Use in-memory store for demonstration (keyring requires OS integration)
-    let store = InMemoryTokenStore::new();
-
-    // Create a sample token key
-    let key = make_token_key("T123ABC", "U456DEF");
-    println!("Token key: {}", key);
-
-    // Store a token
-    match store.set(&key, "xoxb-sample-token") {
-        Ok(_) => println!("Token stored successfully"),
-        Err(e) => println!("Failed to store token: {}", e),
-    }
-
-    // Retrieve the token
-    match store.get(&key) {
-        Ok(token) => println!("Retrieved token: {}", token),
-        Err(e) => println!("Failed to retrieve token: {}", e),
-    }
-
-    // Check if token exists
-    println!("Token exists: {}", store.exists(&key));
-
-    // Note about FileTokenStore
-    println!("\nNote: FileTokenStore is the default for production use:");
-    println!("  let store = FileTokenStore::new().unwrap();");
-    println!("  // Stores tokens in ~/.config/slack-rs/tokens.json with 0600 permissions");
-
-    println!();
-}
-
-/// Example of creating and managing profiles programmatically
-#[allow(dead_code)]
-fn example_profile_management() {
-    let mut config = ProfilesConfig::new();
-
-    // Add a profile
-    let profile = Profile {
-        team_id: "T123ABC".to_string(),
-        user_id: "U456DEF".to_string(),
-        team_name: Some("Example Team".to_string()),
-        user_name: Some("Example User".to_string()),
-        client_id: None,
-        redirect_uri: None,
-        scopes: None,
-        bot_scopes: None,
-        user_scopes: None,
-        default_token_type: None,
-    };
-
-    // Use add() to prevent duplicates
-    match config.add("default".to_string(), profile.clone()) {
-        Ok(_) => println!("Profile added"),
-        Err(e) => println!("Failed to add profile: {}", e),
-    }
-
-    // Use set_or_update() for smart updates
-    match config.set_or_update("default".to_string(), profile) {
-        Ok(_) => println!("Profile updated"),
-        Err(e) => println!("Failed to update profile: {}", e),
-    }
-}
-
-/// Demonstrates profile persistence (save and reload)
-#[allow(dead_code)]
-fn demonstrate_profile_persistence() {
-    println!("=== Profile Persistence Demo ===");
-
-    // Create a temporary config for demonstration
-    let mut config = ProfilesConfig::new();
-
-    // Add profiles using add() and set_or_update()
-    let profile1 = Profile {
-        team_id: "T123ABC".to_string(),
-        user_id: "U456DEF".to_string(),
-        team_name: Some("Example Team".to_string()),
-        user_name: Some("Example User".to_string()),
-        client_id: None,
-        redirect_uri: None,
-        scopes: None,
-        bot_scopes: None,
-        user_scopes: None,
-        default_token_type: None,
-    };
-
-    let profile2 = Profile {
-        team_id: "T789GHI".to_string(),
-        user_id: "U012JKL".to_string(),
-        team_name: Some("Another Team".to_string()),
-        user_name: Some("Another User".to_string()),
-        client_id: None,
-        redirect_uri: None,
-        scopes: None,
-        bot_scopes: None,
-        user_scopes: None,
-        default_token_type: None,
-    };
-
-    // Demonstrate add() - should succeed for new profile
-    match config.add("work".to_string(), profile1) {
-        Ok(_) => println!("Added 'work' profile using add()"),
-        Err(e) => println!("Failed to add profile: {}", e),
-    }
-
-    // Demonstrate set_or_update() - should succeed for new profile
-    match config.set_or_update("personal".to_string(), profile2.clone()) {
-        Ok(_) => println!("Added 'personal' profile using set_or_update()"),
-        Err(e) => println!("Failed to add profile: {}", e),
-    }
-
-    // Demonstrate set_or_update() with same identity - should update
-    let updated_profile2 = Profile {
-        team_id: "T789GHI".to_string(),
-        user_id: "U012JKL".to_string(),
-        team_name: Some("Updated Team Name".to_string()),
-        user_name: Some("Updated User Name".to_string()),
-        client_id: None,
-        redirect_uri: None,
-        scopes: None,
-        bot_scopes: None,
-        user_scopes: None,
-        default_token_type: None,
-    };
-    match config.set_or_update("personal".to_string(), updated_profile2) {
-        Ok(_) => println!("Updated 'personal' profile using set_or_update()"),
-        Err(e) => println!("Failed to update profile: {}", e),
-    }
-
-    // Save config to temp location for demonstration
-    if let Ok(_config_path) = default_config_path() {
-        // Create a test path in a temp directory
-        let temp_dir = std::env::temp_dir();
-        let test_config_path = temp_dir.join("slack-rs_test_profiles.json");
-
-        match save_config(&test_config_path, &config) {
-            Ok(_) => {
-                println!("Saved config to: {}", test_config_path.display());
-
-                // Reload to verify persistence
-                match load_config(&test_config_path) {
-                    Ok(loaded_config) => {
-                        println!("Reloaded config successfully");
-                        println!("Profiles count: {}", loaded_config.profiles.len());
-
-                        // Verify profiles were saved correctly
-                        if let Some(work_profile) = loaded_config.get("work") {
-                            println!(
-                                "  work: {} ({}:{})",
-                                work_profile.team_name.as_deref().unwrap_or("N/A"),
-                                work_profile.team_id,
-                                work_profile.user_id
-                            );
-                        }
-                        if let Some(personal_profile) = loaded_config.get("personal") {
-                            println!(
-                                "  personal: {} ({}:{})",
-                                personal_profile.team_name.as_deref().unwrap_or("N/A"),
-                                personal_profile.team_id,
-                                personal_profile.user_id
-                            );
-                        }
-
-                        // Clean up test file
-                        let _ = std::fs::remove_file(&test_config_path);
-                    }
-                    Err(e) => println!("Failed to reload config: {}", e),
-                }
-            }
-            Err(e) => println!("Failed to save config: {}", e),
-        }
-    } else {
-        println!("Failed to get default config path");
-    }
-
-    println!();
 }

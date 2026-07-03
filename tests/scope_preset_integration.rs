@@ -1,4 +1,4 @@
-use slack_rs::oauth::{all_scopes, expand_scopes};
+use slack::oauth::{all_scopes, expand_scopes};
 
 #[test]
 fn test_all_preset_expands_to_comprehensive_list() {

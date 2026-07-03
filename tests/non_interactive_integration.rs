@@ -1,7 +1,7 @@
 //! Integration tests for non-interactive mode
 
-use slack_rs::api::ApiError;
-use slack_rs::commands::guards::confirm_destructive;
+use slack::api::ApiError;
+use slack::commands::guards::confirm_destructive;
 
 /// Test that confirm_destructive requires --yes in non-interactive mode
 #[test]

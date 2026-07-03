@@ -22,10 +22,6 @@ pub struct OAuthSetParams {
     pub client_secret_env: Option<String>,
     /// File path containing client secret
     pub client_secret_file: Option<String>,
-    /// Direct client secret value (requires explicit confirmation)
-    pub client_secret: Option<String>,
-    /// Explicit confirmation flag (required for client_secret)
-    pub confirmed: bool,
 }
 
 /// Client secret input options
@@ -35,10 +31,6 @@ struct ClientSecretOptions {
     env_var: Option<String>,
     /// File path containing client secret
     file_path: Option<String>,
-    /// Direct client secret value (requires confirmation)
-    direct_value: Option<String>,
-    /// Explicit confirmation flag (required for direct_value)
-    confirmed: bool,
 }
 
 /// Resolve client secret from various input sources with priority order
@@ -47,8 +39,7 @@ struct ClientSecretOptions {
 /// 1. Explicit --client-secret-env (environment variable specified by user)
 /// 2. SLACKRS_CLIENT_SECRET (default environment variable)
 /// 3. --client-secret-file (file path specified by user)
-/// 4. --client-secret (direct value, requires confirmation)
-/// 5. Interactive prompt (if stdin is a TTY)
+/// 4. Interactive prompt (if stdin is a TTY)
 ///
 /// # Arguments
 /// * `options` - Client secret input options
@@ -78,24 +69,7 @@ fn resolve_client_secret(options: ClientSecretOptions) -> Result<String, OAuthEr
         return Ok(secret.trim().to_string());
     }
 
-    // 4. Check --client-secret (requires --yes)
-    if let Some(secret) = options.direct_value {
-        if !options.confirmed {
-            return Err(OAuthError::ConfigError(
-                "Using --client-secret is unsafe (visible in shell history/process list).\n\
-                 Available safer alternatives:\n\
-                 - Set environment variable: SLACKRS_CLIENT_SECRET=<secret>\n\
-                 - Use flag: --client-secret-env <ENV_VAR>\n\
-                 - Use flag: --client-secret-file <PATH>\n\
-                 - Interactive input (run without flags in a terminal)\n\
-                 - Use --yes to confirm direct input (not recommended)"
-                    .to_string(),
-            ));
-        }
-        return Ok(secret);
-    }
-
-    // 5. Interactive prompt (only if stdin is a TTY)
+    // 4. Interactive prompt (only if stdin is a TTY)
     if std::io::stdin().is_terminal() {
         let secret = rpassword::prompt_password("Enter OAuth client secret: ")
             .map_err(|e| OAuthError::ConfigError(format!("Failed to read password: {}", e)))?;
@@ -108,8 +82,7 @@ fn resolve_client_secret(options: ClientSecretOptions) -> Result<String, OAuthEr
          Available options:\n\
          - Set environment variable: SLACKRS_CLIENT_SECRET=<secret>\n\
          - Use flag: --client-secret-env <ENV_VAR>\n\
-         - Use flag: --client-secret-file <PATH>\n\
-         - Use flag: --client-secret <SECRET> --yes (unsafe, not recommended)"
+         - Use flag: --client-secret-file <PATH>"
             .to_string(),
     ))
 }
@@ -128,13 +101,10 @@ pub fn oauth_set(params: OAuthSetParams) -> Result<(), OAuthError> {
     // 1. Explicit --client-secret-env
     // 2. SLACKRS_CLIENT_SECRET environment variable
     // 3. --client-secret-file
-    // 4. --client-secret (requires --yes)
-    // 5. Interactive prompt (if stdin is a TTY)
+    // 4. Interactive prompt (if stdin is a TTY)
     let client_secret = resolve_client_secret(ClientSecretOptions {
         env_var: params.client_secret_env,
         file_path: params.client_secret_file,
-        direct_value: params.client_secret,
-        confirmed: params.confirmed,
     })?;
 
     if client_secret.trim().is_empty() {
@@ -469,27 +439,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "file-secret");
 
-        // Test 4: --client-secret requires confirmation
-        let result = resolve_client_secret(ClientSecretOptions {
-            direct_value: Some("direct-secret".to_string()),
-            ..Default::default()
-        });
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Use --yes to confirm"));
-
-        // Test 5: --client-secret with --yes
-        let result = resolve_client_secret(ClientSecretOptions {
-            direct_value: Some("direct-secret".to_string()),
-            confirmed: true,
-            ..Default::default()
-        });
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "direct-secret");
-
-        // Test 6: No input source in non-interactive mode (stdin is not a TTY in tests)
+        // Test 4: No input source in non-interactive mode (stdin is not a TTY in tests)
         let result = resolve_client_secret(ClientSecretOptions::default());
         assert!(result.is_err());
         assert!(result
@@ -518,7 +468,7 @@ mod tests {
         env::remove_var("SLACKRS_CLIENT_SECRET");
     }
 
-    /// Test that file takes precedence over direct secret
+    /// Test that the secret file is read and trimmed
     #[test]
     #[serial_test::serial]
     fn test_resolve_client_secret_file_precedence() {
@@ -534,8 +484,6 @@ mod tests {
 
         let result = resolve_client_secret(ClientSecretOptions {
             file_path: Some(temp_file.path().to_str().unwrap().to_string()),
-            direct_value: Some("direct-secret".to_string()),
-            confirmed: true,
             ..Default::default()
         });
         assert!(result.is_ok());

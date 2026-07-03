@@ -81,7 +81,6 @@ pub fn generate_manifest(
     redirect_uri: &str,
     profile_name: &str,
 ) -> Result<String, String> {
-    // Determine redirect URLs based on whether cloudflared or ngrok is used
     // Note: Slack does not accept wildcard URLs in manifests, so we only include the actual redirect_uri
     let redirect_urls = vec![redirect_uri.to_string()];
 
@@ -239,24 +238,5 @@ mod tests {
 
         // Should still generate a valid manifest even with empty scopes
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_generate_manifest_with_ngrok() {
-        let bot_scopes = vec!["chat:write".to_string()];
-        let user_scopes = vec!["search:read".to_string()];
-        let result = generate_manifest(
-            &bot_scopes,
-            &user_scopes,
-            "http://localhost:8765/callback",
-            "ngrok-test",
-        );
-
-        assert!(result.is_ok());
-        let yaml = result.unwrap();
-        // Wildcard URLs are not supported by Slack, so only the actual redirect_uri is included
-        assert!(yaml.contains("http://localhost:8765/callback"));
-        assert!(yaml.contains("chat:write"));
-        assert!(yaml.contains("search:read"));
     }
 }

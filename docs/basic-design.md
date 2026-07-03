@@ -63,7 +63,7 @@
 
 ### Token Store (secret)
 - **file storage**:
-  - service: `slack-rs`
+  - service: `slack`
   - username: `{team_id}:{user_id}`
   - secret: token payload (either raw access token or JSON blob)
 

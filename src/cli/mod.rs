@@ -961,7 +961,7 @@ pub async fn run_thread_get(args: &[String]) -> Result<(), String> {
 
     // Parse required arguments: channel and thread_ts
     if args.len() < 5 {
-        return Err("Usage: slack-rs thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw] [--profile=NAME] [--token-type=bot|user]".to_string());
+        return Err("Usage: slack thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw] [--profile=NAME] [--token-type=bot|user]".to_string());
     }
 
     let channel = args[3].clone();

@@ -8,12 +8,12 @@
 
 use httpmock::prelude::*;
 use serde_json::json;
-use slack_rs::api::ApiClient;
-use slack_rs::cli::{add_thread_resolution_metadata, build_thread_get_output};
-use slack_rs::commands::conv::{collect_thread_user_ids, resolve_thread_users};
-use slack_rs::commands::thread_get;
-use slack_rs::commands::users_cache::{CachedUser, WorkspaceCache};
-use slack_rs::profile::ProfilesConfig;
+use slack::api::ApiClient;
+use slack::cli::{add_thread_resolution_metadata, build_thread_get_output};
+use slack::commands::conv::{collect_thread_user_ids, resolve_thread_users};
+use slack::commands::thread_get;
+use slack::commands::users_cache::{CachedUser, WorkspaceCache};
+use slack::profile::ProfilesConfig;
 use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;
@@ -440,7 +440,7 @@ async fn test_thread_get_default_cli_metadata_keeps_messages_slack_native() {
     });
 
     let client = ApiClient::new_with_base_url("test-token".to_string(), server.base_url());
-    let mut response = slack_rs::api::ApiResponse {
+    let mut response = slack::api::ApiResponse {
         ok: true,
         data: HashMap::from([(
             "messages".to_string(),
@@ -503,7 +503,7 @@ async fn test_thread_get_default_cli_metadata_separates_unresolved_ids() {
     });
 
     let client = ApiClient::new_with_base_url("test-token".to_string(), server.base_url());
-    let mut response = slack_rs::api::ApiResponse {
+    let mut response = slack::api::ApiResponse {
         ok: true,
         data: HashMap::from([(
             "messages".to_string(),
@@ -557,7 +557,7 @@ fn write_default_profile_config(temp_dir: &TempDir) -> std::path::PathBuf {
     let mut config = ProfilesConfig::new();
     config.set(
         "default".to_string(),
-        slack_rs::profile::Profile::with_scopes(
+        slack::profile::Profile::with_scopes(
             "T001".to_string(),
             "UCLI".to_string(),
             Some("Test Team".to_string()),

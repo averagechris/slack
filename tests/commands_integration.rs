@@ -3,9 +3,9 @@
 //! Tests that each command calls the correct Slack API methods with proper parameters
 
 use serial_test::serial;
-use slack_rs::api::ApiClient;
-use slack_rs::commands;
-use slack_rs::commands::ConversationSelector;
+use slack::api::ApiClient;
+use slack::commands;
+use slack::commands::ConversationSelector;
 use std::collections::HashMap;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -5,7 +5,7 @@ pub fn print_export_help() {
     println!("Export profiles to encrypted file");
     println!();
     println!("USAGE:");
-    println!("    slack-rs auth export [OPTIONS]");
+    println!("    slack auth export [OPTIONS]");
     println!();
     println!("OPTIONS:");
     println!("    --profile <name>           Export specific profile (default: 'default')");
@@ -20,10 +20,10 @@ pub fn print_export_help() {
     println!("EXAMPLES:");
     println!("    # Export default profile");
     println!("    export PASSPHRASE=mysecret");
-    println!("    slack-rs auth export --out backup.enc --passphrase-env PASSPHRASE --yes");
+    println!("    slack auth export --out backup.enc --passphrase-env PASSPHRASE --yes");
     println!();
     println!("    # Export all profiles with prompt");
-    println!("    slack-rs auth export --all --out all-profiles.enc --passphrase-prompt --yes");
+    println!("    slack auth export --all --out all-profiles.enc --passphrase-prompt --yes");
 }
 
 /// Print import command help
@@ -31,7 +31,7 @@ pub fn print_import_help() {
     println!("Import profiles from encrypted file");
     println!();
     println!("USAGE:");
-    println!("    slack-rs auth import [OPTIONS]");
+    println!("    slack auth import [OPTIONS]");
     println!();
     println!("OPTIONS:");
     println!("    --in <file>                Input file path (required)");
@@ -47,13 +47,11 @@ pub fn print_import_help() {
     println!("EXAMPLES:");
     println!("    # Import from encrypted file");
     println!("    export PASSPHRASE=mysecret");
-    println!("    slack-rs auth import --in backup.enc --passphrase-env PASSPHRASE");
+    println!("    slack auth import --in backup.enc --passphrase-env PASSPHRASE");
     println!();
     println!("    # Import with force overwrite");
-    println!("    slack-rs auth import --in backup.enc --passphrase-prompt --force --yes");
+    println!("    slack auth import --in backup.enc --passphrase-prompt --force --yes");
     println!();
     println!("    # Preview import plan as JSON without writing changes");
-    println!(
-        "    slack-rs auth import --in backup.enc --passphrase-env PASSPHRASE --dry-run --json"
-    );
+    println!("    slack auth import --in backup.enc --passphrase-env PASSPHRASE --dry-run --json");
 }

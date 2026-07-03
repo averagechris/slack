@@ -58,7 +58,7 @@ pub async fn file_upload(
     check_write_allowed()?;
 
     // Build hint with example command for non-interactive mode
-    let hint = format!("Example: slack-rs file upload {} --yes", file_path);
+    let hint = format!("Example: slack file upload {} --yes", file_path);
     confirm_destructive_with_hint(yes, "upload this file", non_interactive, Some(&hint))?;
 
     // Step 1: Read file and get metadata

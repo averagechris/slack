@@ -26,7 +26,6 @@ pub struct LoginArgs {
 pub enum TunnelMode {
     None,
     Cloudflared(Option<String>),
-    Ngrok(Option<String>),
 }
 
 impl TunnelMode {
@@ -39,18 +38,11 @@ impl TunnelMode {
     pub fn is_cloudflared(&self) -> bool {
         matches!(self, TunnelMode::Cloudflared(_))
     }
-
-    /// Check if ngrok is enabled
-    #[allow(dead_code)]
-    pub fn is_ngrok(&self) -> bool {
-        matches!(self, TunnelMode::Ngrok(_))
-    }
 }
 
 /// Parse login command arguments
 ///
 /// This function extracts and validates arguments for the `auth login` command.
-/// It enforces mutual exclusivity between --cloudflared and --ngrok flags.
 ///
 /// # Arguments
 /// * `args` - Raw command line arguments after "auth login"
@@ -60,14 +52,12 @@ impl TunnelMode {
 /// * `Err(String)` - Parse error with descriptive message
 ///
 /// # Validation Rules
-/// 1. --cloudflared and --ngrok are mutually exclusive
-/// 2. Unknown options are rejected
-/// 3. Scope inputs are normalized (comma-separated, whitespace-trimmed)
+/// 1. Unknown options are rejected
+/// 2. Scope inputs are normalized (comma-separated, whitespace-trimmed)
 pub fn parse_login_args(args: &[String]) -> Result<LoginArgs, String> {
     let mut profile_name: Option<String> = None;
     let mut client_id: Option<String> = None;
     let mut cloudflared_path: Option<String> = None;
-    let mut ngrok_path: Option<String> = None;
     let mut bot_scopes: Option<Vec<String>> = None;
     let mut user_scopes: Option<Vec<String>> = None;
 
@@ -91,16 +81,6 @@ pub fn parse_login_args(args: &[String]) -> Result<LoginArgs, String> {
                     } else {
                         // Use default "cloudflared" (PATH resolution)
                         cloudflared_path = Some("cloudflared".to_string());
-                    }
-                }
-                "--ngrok" => {
-                    // Check if next arg is a value (not starting with --) or end of args
-                    if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                        i += 1;
-                        ngrok_path = Some(args[i].clone());
-                    } else {
-                        // Use default "ngrok" (PATH resolution)
-                        ngrok_path = Some("ngrok".to_string());
                     }
                 }
                 "--bot-scopes" => {
@@ -137,16 +117,9 @@ pub fn parse_login_args(args: &[String]) -> Result<LoginArgs, String> {
         i += 1;
     }
 
-    // Check for conflicting options
-    if cloudflared_path.is_some() && ngrok_path.is_some() {
-        return Err("Cannot specify both --cloudflared and --ngrok at the same time".to_string());
-    }
-
     // Determine tunnel mode
     let tunnel_mode = if let Some(path) = cloudflared_path {
         TunnelMode::Cloudflared(Some(path))
-    } else if let Some(path) = ngrok_path {
-        TunnelMode::Ngrok(Some(path))
     } else {
         TunnelMode::None
     };
@@ -171,12 +144,12 @@ pub async fn run_auth_login(args: &[String], non_interactive: bool) -> Result<()
     // Keep base_url from environment for testing purposes only
     let base_url = std::env::var("SLACK_OAUTH_BASE_URL").ok();
 
-    // If cloudflared or ngrok is specified, use extended login flow (manifest-first)
+    // If cloudflared is specified, use extended login flow (manifest-first)
     if parsed_args.tunnel_mode.is_enabled() {
         // Tunnel mode requires interactive mode for credential input after manifest generation
         if non_interactive {
             return Err(
-                "Tunnel login (--cloudflared/--ngrok) requires interactive mode.\n\
+                "Tunnel login (--cloudflared) requires interactive mode.\n\
                  The manifest-first flow needs user interaction to create the Slack App\n\
                  and then enter credentials. Use the standard login flow for non-interactive mode."
                     .to_string(),
@@ -931,25 +904,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_login_args_ngrok_default() {
+    fn test_parse_login_args_ngrok_removed() {
         let args = vec!["--ngrok".to_string()];
         let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert!(matches!(parsed.tunnel_mode, TunnelMode::Ngrok(Some(_))));
-        if let TunnelMode::Ngrok(Some(path)) = parsed.tunnel_mode {
-            assert_eq!(path, "ngrok");
-        }
-    }
-
-    #[test]
-    fn test_parse_login_args_cloudflared_ngrok_mutual_exclusion() {
-        let args = vec!["--cloudflared".to_string(), "--ngrok".to_string()];
-        let result = parse_login_args(&args);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Cannot specify both --cloudflared and --ngrok"));
+        assert!(result.unwrap_err().contains("Unknown option"));
     }
 
     #[test]
@@ -1040,7 +999,6 @@ mod tests {
         let mode = TunnelMode::None;
         assert!(!mode.is_enabled());
         assert!(!mode.is_cloudflared());
-        assert!(!mode.is_ngrok());
     }
 
     #[test]
@@ -1048,15 +1006,6 @@ mod tests {
         let mode = TunnelMode::Cloudflared(Some("cloudflared".to_string()));
         assert!(mode.is_enabled());
         assert!(mode.is_cloudflared());
-        assert!(!mode.is_ngrok());
-    }
-
-    #[test]
-    fn test_tunnel_mode_ngrok() {
-        let mode = TunnelMode::Ngrok(Some("ngrok".to_string()));
-        assert!(mode.is_enabled());
-        assert!(!mode.is_cloudflared());
-        assert!(mode.is_ngrok());
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! Integration tests for export/import functionality
 
-use slack_rs::auth::{
+use slack::auth::{
     export_profiles, import_profiles, ExportOptions, ImportAction, ImportOptions, ImportResult,
     ImportSummary, ProfileImportResult,
 };
-use slack_rs::profile::{
+use slack::profile::{
     make_token_key, save_config, InMemoryTokenStore, Profile, ProfilesConfig, TokenStore,
 };
 use std::fs;
@@ -148,7 +148,7 @@ fn test_export_file_permissions() {
 
 #[test]
 fn test_crypto_round_trip() {
-    use slack_rs::auth::crypto::{self, KdfParams};
+    use slack::auth::crypto::{self, KdfParams};
 
     let passphrase = "test_password";
     let plaintext = b"Hello, World!";
@@ -167,8 +167,8 @@ fn test_crypto_round_trip() {
 
 #[test]
 fn test_format_round_trip() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload};
 
     let payload = ExportPayload::new();
     let passphrase = "test_password";
@@ -194,7 +194,7 @@ fn test_format_round_trip() {
 
 #[test]
 fn test_i18n_messages() {
-    use slack_rs::auth::{Language, Messages};
+    use slack::auth::{Language, Messages};
 
     let en_messages = Messages::new(Language::English);
     let ja_messages = Messages::new(Language::Japanese);
@@ -216,7 +216,7 @@ fn test_i18n_messages() {
 
 #[test]
 fn test_i18n_format() {
-    use slack_rs::auth::{Language, Messages};
+    use slack::auth::{Language, Messages};
 
     let messages = Messages::new(Language::English);
     let formatted = messages.format("info.export_count", &[("count", "5")]);
@@ -227,8 +227,8 @@ fn test_i18n_format() {
 
 #[test]
 fn test_import_result_tracking_new_profile() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload, ExportProfile};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload, ExportProfile};
 
     let temp_dir = TempDir::new().unwrap();
     let import_path = temp_dir.path().join("import.dat");
@@ -354,8 +354,8 @@ fn test_import_action_display() {
 // #[test] - disabled: requires config path injection capability
 #[allow(dead_code)]
 fn test_import_team_id_conflict_without_force_disabled() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload, ExportProfile};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload, ExportProfile};
     use std::env;
 
     let temp_dir = TempDir::new().unwrap();
@@ -463,8 +463,8 @@ fn test_import_team_id_conflict_without_force_disabled() {
 // #[test] - disabled: requires config path injection capability
 #[allow(dead_code)]
 fn test_import_team_id_conflict_with_force() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload, ExportProfile};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload, ExportProfile};
     use std::env;
 
     let temp_dir = TempDir::new().unwrap();
@@ -572,8 +572,8 @@ fn test_import_team_id_conflict_with_force() {
 // #[test] - disabled: requires config path injection capability
 #[allow(dead_code)]
 fn test_import_same_name_different_team_id_without_force() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload, ExportProfile};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload, ExportProfile};
     use std::env;
 
     let temp_dir = TempDir::new().unwrap();
@@ -680,8 +680,8 @@ fn test_import_same_name_different_team_id_without_force() {
 // #[test] - disabled: requires config path injection capability
 #[allow(dead_code)]
 fn test_import_same_name_different_team_id_with_force() {
-    use slack_rs::auth::crypto::{self, KdfParams};
-    use slack_rs::auth::format::{self, ExportPayload, ExportProfile};
+    use slack::auth::crypto::{self, KdfParams};
+    use slack::auth::format::{self, ExportPayload, ExportProfile};
     use std::env;
 
     let temp_dir = TempDir::new().unwrap();

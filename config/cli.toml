@@ -1,0 +1,3 @@
+# Single source of truth for the CLI binary name (linear-cli pattern).
+# Consumed by packaging (flake.nix) and release tooling.
+program_name = "slack"

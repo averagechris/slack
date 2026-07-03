@@ -1,7 +1,7 @@
 //! Tests for unified output envelope and --raw flag
 
 use serde_json::json;
-use slack_rs::api::{ApiCallMeta, ApiCallResponse, CommandMeta, CommandResponse};
+use slack::api::{ApiCallMeta, ApiCallResponse, CommandMeta, CommandResponse};
 
 #[test]
 fn test_api_call_meta_includes_command() {

@@ -1,6 +1,6 @@
 //! Integration tests for OAuth flow with mock server
 
-use slack_rs::oauth::{exchange_code, OAuthConfig};
+use slack::oauth::{exchange_code, OAuthConfig};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -103,7 +103,7 @@ async fn test_exchange_code_slack_error() {
     // Verify error
     assert!(result.is_err());
     match result {
-        Err(slack_rs::oauth::OAuthError::SlackError(msg)) => {
+        Err(slack::oauth::OAuthError::SlackError(msg)) => {
             assert_eq!(msg, "invalid_code");
         }
         _ => panic!("Expected SlackError"),
@@ -143,7 +143,7 @@ async fn test_exchange_code_http_error() {
     // Verify error
     assert!(result.is_err());
     match result {
-        Err(slack_rs::oauth::OAuthError::HttpError(status, _)) => {
+        Err(slack::oauth::OAuthError::HttpError(status, _)) => {
             assert_eq!(status, 500);
         }
         _ => panic!("Expected HttpError"),

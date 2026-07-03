@@ -1,24 +1,23 @@
 [package]
-name = "slack-rs"
+name = "slack"
 version = "0.1.71"
 edition = "2021"
-default-run = "slack-rs"
-authors = ["tumf <tumf@users.noreply.github.com>"]
-description = "A Slack CLI tool with OAuth authentication, profile management, and API access"
-license = "MIT"
-repository = "https://github.com/tumf/slack-rs"
-homepage = "https://github.com/tumf/slack-rs"
-documentation = "https://docs.rs/slack-rs"
+default-run = "slack"
+authors = ["Chris <chris@thesogu.com>"]
+description = "A Slack CLI with OAuth authentication, profile management, and API access"
+license = "MIT OR Apache-2.0"
+repository = "https://git.sr.ht/~averagechris/slack"
+homepage = "https://git.sr.ht/~averagechris/slack"
 readme = "README.md"
 keywords = ["slack", "cli", "oauth", "api", "workspace"]
 categories = ["command-line-utilities", "api-bindings"]
 
 [[bin]]
-name = "slack-rs"
+name = "slack"
 path = "src/main.rs"
 
 [lib]
-name = "slack_rs"
+name = "slack"
 path = "src/lib.rs"
 
 [dependencies]
@@ -38,24 +37,9 @@ aes-gcm = "0.10"
 rpassword = "7.3"
 regex = "1.11"
 arboard = "3.4"
-agent-skills-rs = "0.2.0"
 
 [dev-dependencies]
 tempfile = "3.14"
 wiremock = "0.6"
 httpmock = "0.8"
 serial_test = "3.0"
-
-[package.metadata.release]
-# Publish to crates.io (disabled by default - use manual publish)
-publish = false
-# Create and push git tag
-tag = true
-# Push changes to remote
-push = true
-# Sign git tags with GPG
-sign-tag = false
-# Pre-release commit message
-pre-release-commit-message = "chore: release {{version}}"
-# Enable/disable pre-release checks
-verify = true

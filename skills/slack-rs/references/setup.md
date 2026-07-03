@@ -1,22 +1,22 @@
 # slack-rs setup
 
-One-time or infrequent setup steps for using `slack-rs`.
+One-time or infrequent setup steps for using `slack`.
 
 ## Install
 
-Install from crates.io (recommended):
+Install with Nix (recommended):
 
 ```bash
-cargo install slack-rs
+nix run sourcehut:~averagechris/slack -- --help
 ```
 
 Build from source:
 
 ```bash
-git clone https://github.com/tumf/slack-rs.git
-cd slack-rs
+git clone https://git.sr.ht/~averagechris/slack
+cd slack
 cargo build --release
-./target/release/slack-rs --help
+./target/release/slack --help
 ```
 
 Or install from a local checkout:
@@ -30,7 +30,7 @@ cargo install --path .
 Create a Slack app and configure OAuth.
 
 Recommended login flow (especially for remote/SSH environments): use `--cloudflared`.
-In this mode, `slack-rs auth login` generates a Slack App Manifest YAML for you (and copies it to clipboard, best effort).
+In this mode, `slack auth login` generates a Slack App Manifest YAML for you (and copies it to clipboard, best effort).
 
 1. Go to https://api.slack.com/apps and create an app.
 2. Copy your Client ID and Client Secret from "Basic Information" -> "App Credentials".
@@ -45,7 +45,7 @@ In this mode, `slack-rs auth login` generates a Slack App Manifest YAML for you 
 Recommended: store OAuth config per profile (client secret is stored securely in file storage).
 
 ```bash
-slack-rs config oauth set my-workspace \
+slack config oauth set my-workspace \
   --client-id 123456789012.1234567890123 \
   --redirect-uri http://127.0.0.1:8765/callback \
   --scopes "chat:write,users:read,channels:read"
@@ -66,18 +66,18 @@ Full list: https://api.slack.com/scopes
 ## Authenticate (Per Profile)
 
 ```bash
-slack-rs auth login my-workspace
-slack-rs auth status my-workspace
-slack-rs auth list
+slack auth login my-workspace
+slack auth status my-workspace
+slack auth list
 ```
 
 Remote/SSH environments (recommended):
 
 ```bash
-slack-rs auth login my-workspace --client-id 123456789012.1234567890123 --cloudflared
+slack auth login my-workspace --client-id 123456789012.1234567890123 --cloudflared
 ```
 
-Note: Check `slack-rs auth login --help` for current tunnel support (e.g., `--cloudflared`, `--ngrok`).
+Note: Check `slack auth login --help` for current tunnel support (`--cloudflared`).
 
 During login, the CLI opens a browser for OAuth authorization and stores:
 

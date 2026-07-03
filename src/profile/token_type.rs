@@ -37,7 +37,7 @@ impl TokenType {
     ///
     /// # Examples
     /// ```
-    /// use slack_rs::profile::TokenType;
+    /// use slack::profile::TokenType;
     ///
     /// // CLI flag takes priority
     /// let resolved = TokenType::resolve(Some(TokenType::User), Some(TokenType::Bot), TokenType::Bot);

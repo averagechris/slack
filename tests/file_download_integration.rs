@@ -2,8 +2,8 @@
 //!
 //! Tests redirect following and HTML error response handling
 
-use slack_rs::api::ApiClient;
-use slack_rs::commands;
+use slack::api::ApiClient;
+use slack::commands;
 use std::collections::HashMap;
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};

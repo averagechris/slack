@@ -224,7 +224,7 @@ pub fn user_scopes() -> Vec<String> {
 ///
 /// # Example
 /// ```
-/// use slack_rs::oauth::scopes::expand_scopes;
+/// use slack::oauth::scopes::expand_scopes;
 ///
 /// let result = expand_scopes(&["bot:all".to_string(), "custom:scope".to_string()]);
 /// assert!(result.contains(&"chat:write".to_string()));

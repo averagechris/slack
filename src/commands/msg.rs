@@ -31,7 +31,7 @@ pub async fn msg_post(
     check_write_allowed()?;
 
     // Build hint with example command for non-interactive mode
-    let hint = format!("Example: slack-rs msg post {} \"{}\" --yes", channel, text);
+    let hint = format!("Example: slack msg post {} \"{}\" --yes", channel, text);
     confirm_destructive_with_hint(yes, "post this message", non_interactive, Some(&hint))?;
 
     let mut params = HashMap::new();
@@ -73,7 +73,7 @@ pub async fn msg_update(
 
     // Build hint with example command for non-interactive mode
     let hint = format!(
-        "Example: slack-rs msg update {} {} \"new text\" --yes",
+        "Example: slack msg update {} {} \"new text\" --yes",
         channel, ts
     );
     confirm_destructive_with_hint(yes, "update this message", non_interactive, Some(&hint))?;
@@ -108,7 +108,7 @@ pub async fn msg_delete(
     check_write_allowed()?;
 
     // Build hint with example command for non-interactive mode
-    let hint = format!("Example: slack-rs msg delete {} {} --yes", channel, ts);
+    let hint = format!("Example: slack msg delete {} {} --yes", channel, ts);
     confirm_destructive_with_hint(yes, "delete this message", non_interactive, Some(&hint))?;
 
     let mut params = HashMap::new();

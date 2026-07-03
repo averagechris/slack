@@ -2,7 +2,7 @@
 
 ## Overview
 
-`slack-rs` uses OAuth 2.0 with PKCE for Slack workspace authentication. This guide covers all authentication workflows in detail.
+`slack` uses OAuth 2.0 with PKCE for Slack workspace authentication. This guide covers all authentication workflows in detail.
 
 For implementation details of the OAuth protocol, see [docs/oauth.md](oauth.md).
 
@@ -17,7 +17,7 @@ The simplest way to authenticate is using `--cloudflared`, which handles tunnel 
 
 ```bash
 # 1. Start login — manifest YAML is generated automatically
-slack-rs auth login my-workspace --cloudflared
+slack auth login my-workspace --cloudflared
 # → Tunnel starts, manifest YAML saved to ~/.config/slack-rs/<profile>_manifest.yml
 
 # 2. Create Slack App from manifest
@@ -34,7 +34,7 @@ slack-rs auth login my-workspace --cloudflared
 **Customizing scopes:**
 
 ```bash
-slack-rs auth login my-workspace --cloudflared --bot-scopes chat:write --user-scopes users:read,channels:read
+slack auth login my-workspace --cloudflared --bot-scopes chat:write --user-scopes users:read,channels:read
 ```
 
 Common scopes: `chat:write`, `users:read`, `channels:read`, `files:read`, `search:read`, `reactions:write`. See [full list](https://api.slack.com/scopes).
@@ -52,7 +52,7 @@ Common scopes: `chat:write`, `users:read`, `channels:read`, `files:read`, `searc
 ### 2. Save OAuth Config
 
 ```bash
-slack-rs config oauth set my-workspace \
+slack config oauth set my-workspace \
   --client-id 123456789012.1234567890123 \
   --redirect-uri http://127.0.0.1:8765/callback \
   --scopes "chat:write,users:read,channels:read"
@@ -61,7 +61,7 @@ slack-rs config oauth set my-workspace \
 ### 3. Authenticate
 
 ```bash
-slack-rs auth login my-workspace
+slack auth login my-workspace
 # Browser opens → Click "Allow" → Token saved
 ```
 
@@ -69,10 +69,10 @@ slack-rs auth login my-workspace
 
 ```bash
 # Client ID as argument, secret prompted
-slack-rs auth login my-workspace --client-id 123456789012.1234567890123
+slack auth login my-workspace --client-id 123456789012.1234567890123
 
 # Fully interactive (both ID and secret prompted)
-slack-rs auth login my-workspace
+slack auth login my-workspace
 ```
 
 ## Using Tunnels for Remote Authentication
@@ -82,7 +82,7 @@ When `localhost` is not accessible (SSH, Docker, cloud instances):
 ### Method A: Built-in Cloudflare Tunnel (Recommended)
 
 ```bash
-slack-rs auth login my-workspace --cloudflared
+slack auth login my-workspace --cloudflared
 ```
 
 The CLI automatically starts the tunnel, generates a manifest with the correct redirect URL, and handles the OAuth callback. The tunnel is closed after authentication.
@@ -94,12 +94,12 @@ The CLI automatically starts the tunnel, generates a manifest with the correct r
 cloudflared tunnel --url http://localhost:8765
 
 # Configure redirect URI with the tunnel URL
-slack-rs config oauth set my-workspace \
+slack config oauth set my-workspace \
   --client-id 123456789012.1234567890123 \
   --redirect-uri https://xyz-def-ghi.trycloudflare.com/callback \
   --scopes "chat:write,users:read"
 
-slack-rs auth login my-workspace
+slack auth login my-workspace
 ```
 
 **Security notes:**
@@ -112,33 +112,33 @@ slack-rs auth login my-workspace
 ### Login
 
 ```bash
-slack-rs auth login [profile-name]              # Use saved config or prompts
-slack-rs auth login [profile-name] --client-id <id>  # Explicit client ID
-slack-rs auth login [profile-name] --cloudflared     # Cloudflare Tunnel mode
+slack auth login [profile-name]              # Use saved config or prompts
+slack auth login [profile-name] --client-id <id>  # Explicit client ID
+slack auth login [profile-name] --cloudflared     # Cloudflare Tunnel mode
 ```
 
 ### Status
 
 ```bash
-slack-rs auth status [profile-name]  # Check auth and profile info
+slack auth status [profile-name]  # Check auth and profile info
 ```
 
 ### List
 
 ```bash
-slack-rs auth list  # Show all saved profiles
+slack auth list  # Show all saved profiles
 ```
 
 ### Rename
 
 ```bash
-slack-rs auth rename <old-name> <new-name>
+slack auth rename <old-name> <new-name>
 ```
 
 ### Logout
 
 ```bash
-slack-rs auth logout <profile-name>  # Remove profile and credentials
+slack auth logout <profile-name>  # Remove profile and credentials
 ```
 
 ## OAuth Configuration Management
@@ -146,7 +146,7 @@ slack-rs auth logout <profile-name>  # Remove profile and credentials
 ### Set
 
 ```bash
-slack-rs config oauth set <profile> \
+slack config oauth set <profile> \
   --client-id <id> \
   --redirect-uri <uri> \
   --scopes <scopes>
@@ -156,13 +156,13 @@ slack-rs config oauth set <profile> \
 ### Show
 
 ```bash
-slack-rs config oauth show <profile>
+slack config oauth show <profile>
 ```
 
 ### Delete
 
 ```bash
-slack-rs config oauth delete <profile>
+slack config oauth delete <profile>
 ```
 
 ## Profile Export/Import
@@ -172,15 +172,15 @@ Create encrypted backups or migrate profiles between machines.
 ### Export
 
 ```bash
-slack-rs auth export --profile <name> --out <file> --passphrase-prompt
-slack-rs auth export --all --out <file> --passphrase-prompt
+slack auth export --profile <name> --out <file> --passphrase-prompt
+slack auth export --all --out <file> --passphrase-prompt
 ```
 
 ### Import
 
 ```bash
-slack-rs auth import --profile <name> --in <file> --passphrase-prompt
-slack-rs auth import --all --in <file> --passphrase-prompt
+slack auth import --profile <name> --in <file> --passphrase-prompt
+slack auth import --all --in <file> --passphrase-prompt
 ```
 
 ### Security Details
@@ -215,7 +215,7 @@ Set `SLACKCLI_ALLOW_WRITE=false` to prevent accidental write operations:
 
 ```bash
 export SLACKCLI_ALLOW_WRITE=false
-slack-rs msg post C123 "Hello"  # → Error: Write operation denied
+slack msg post C123 "Hello"  # → Error: Write operation denied
 ```
 
 For more details, see [docs/security.md](security.md) and [docs/config-and-storage.md](config-and-storage.md).

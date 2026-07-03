@@ -89,7 +89,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "api call".to_string(),
             description: "Call a Slack API method".to_string(),
-            usage: "slack-rs api call <method> [key=value]... [flags]".to_string(),
+            usage: "slack api call <method> [key=value]... [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--json".to_string(),
@@ -123,11 +123,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "Get user info".to_string(),
-                    command: "slack-rs api call users.info user=U123456 --get".to_string(),
+                    command: "slack api call users.info user=U123456 --get".to_string(),
                 },
                 ExampleDef {
                     description: "Post message".to_string(),
-                    command: "slack-rs api call chat.postMessage channel=C123 text=Hello"
+                    command: "slack api call chat.postMessage channel=C123 text=Hello"
                         .to_string(),
                 },
             ],
@@ -146,7 +146,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth login".to_string(),
             description: "Authenticate with Slack via OAuth".to_string(),
-            usage: "slack-rs auth login [profile_name] [flags]".to_string(),
+            usage: "slack auth login [profile_name] [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--client-id".to_string(),
@@ -172,7 +172,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Login with default profile".to_string(),
-                command: "slack-rs auth login".to_string(),
+                command: "slack auth login".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -189,11 +189,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth status".to_string(),
             description: "Show authentication status".to_string(),
-            usage: "slack-rs auth status [profile_name]".to_string(),
+            usage: "slack auth status [profile_name]".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "Check status".to_string(),
-                command: "slack-rs auth status".to_string(),
+                command: "slack auth status".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -210,11 +210,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth list".to_string(),
             description: "List all profiles".to_string(),
-            usage: "slack-rs auth list".to_string(),
+            usage: "slack auth list".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "List profiles".to_string(),
-                command: "slack-rs auth list".to_string(),
+                command: "slack auth list".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -231,11 +231,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth logout".to_string(),
             description: "Remove authentication for a profile".to_string(),
-            usage: "slack-rs auth logout [profile_name]".to_string(),
+            usage: "slack auth logout [profile_name]".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "Logout".to_string(),
-                command: "slack-rs auth logout".to_string(),
+                command: "slack auth logout".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -252,7 +252,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "conv list".to_string(),
             description: "List conversations".to_string(),
-            usage: "slack-rs conv list [flags]".to_string(),
+            usage: "slack conv list [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--types".to_string(),
@@ -300,11 +300,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "List all conversations".to_string(),
-                    command: "slack-rs conv list".to_string(),
+                    command: "slack conv list".to_string(),
                 },
                 ExampleDef {
                     description: "List with filter".to_string(),
-                    command: "slack-rs conv list --filter is_member:true".to_string(),
+                    command: "slack conv list --filter is_member:true".to_string(),
                 },
             ],
             exit_codes: vec![
@@ -322,7 +322,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "conv search".to_string(),
             description: "Search conversations by name".to_string(),
-            usage: "slack-rs conv search <pattern> [flags]".to_string(),
+            usage: "slack conv search <pattern> [flags]".to_string(),
             flags: vec![FlagDef {
                 name: "--profile".to_string(),
                 flag_type: "string".to_string(),
@@ -332,7 +332,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             }],
             examples: vec![ExampleDef {
                 description: "Search conversations".to_string(),
-                command: "slack-rs conv search general".to_string(),
+                command: "slack conv search general".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -349,7 +349,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "conv history".to_string(),
             description: "Get conversation history".to_string(),
-            usage: "slack-rs conv history <channel> [flags]".to_string(),
+            usage: "slack conv history <channel> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--limit".to_string(),
@@ -368,7 +368,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Get history".to_string(),
-                command: "slack-rs conv history C123456".to_string(),
+                command: "slack conv history C123456".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -385,7 +385,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "thread get".to_string(),
             description: "Get thread messages. Default JSON adds response.resolved_users keyed by user ID. --raw returns Slack-native shape without wrapper metadata.".to_string(),
-            usage: "slack-rs thread get <channel> <thread_ts> [flags]".to_string(),
+            usage: "slack thread get <channel> <thread_ts> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--limit".to_string(),
@@ -426,11 +426,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "Get thread messages".to_string(),
-                    command: "slack-rs thread get C123456 1234567890.123456".to_string(),
+                    command: "slack thread get C123456 1234567890.123456".to_string(),
                 },
                 ExampleDef {
                     description: "Get thread with parent message".to_string(),
-                    command: "slack-rs thread get C123456 1234567890.123456 --inclusive".to_string(),
+                    command: "slack thread get C123456 1234567890.123456 --inclusive".to_string(),
                 },
             ],
             exit_codes: vec![
@@ -448,7 +448,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "msg post".to_string(),
             description: "Post a message to a channel".to_string(),
-            usage: "slack-rs msg post <channel> <text> [flags]".to_string(),
+            usage: "slack msg post <channel> <text> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--thread-ts".to_string(),
@@ -481,7 +481,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Post message".to_string(),
-                command: "slack-rs msg post C123 'Hello world'".to_string(),
+                command: "slack msg post C123 'Hello world'".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -498,7 +498,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "msg update".to_string(),
             description: "Update a message".to_string(),
-            usage: "slack-rs msg update <channel> <ts> <text> [flags]".to_string(),
+            usage: "slack msg update <channel> <ts> <text> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -517,7 +517,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Update message".to_string(),
-                command: "slack-rs msg update C123 1234567890.123456 'Updated text'".to_string(),
+                command: "slack msg update C123 1234567890.123456 'Updated text'".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -534,7 +534,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "msg delete".to_string(),
             description: "Delete a message".to_string(),
-            usage: "slack-rs msg delete <channel> <ts> [flags]".to_string(),
+            usage: "slack msg delete <channel> <ts> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -553,7 +553,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Delete message".to_string(),
-                command: "slack-rs msg delete C123 1234567890.123456".to_string(),
+                command: "slack msg delete C123 1234567890.123456".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -570,7 +570,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "users info".to_string(),
             description: "Get user information".to_string(),
-            usage: "slack-rs users info <user_id> [flags]".to_string(),
+            usage: "slack users info <user_id> [flags]".to_string(),
             flags: vec![FlagDef {
                 name: "--profile".to_string(),
                 flag_type: "string".to_string(),
@@ -580,7 +580,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             }],
             examples: vec![ExampleDef {
                 description: "Get user info".to_string(),
-                command: "slack-rs users info U123456".to_string(),
+                command: "slack users info U123456".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -597,7 +597,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "react add".to_string(),
             description: "Add a reaction to a message".to_string(),
-            usage: "slack-rs react add <channel> <ts> <emoji> [flags]".to_string(),
+            usage: "slack react add <channel> <ts> <emoji> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -616,7 +616,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Add reaction".to_string(),
-                command: "slack-rs react add C123 1234567890.123456 thumbsup".to_string(),
+                command: "slack react add C123 1234567890.123456 thumbsup".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -633,7 +633,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "react remove".to_string(),
             description: "Remove a reaction from a message".to_string(),
-            usage: "slack-rs react remove <channel> <ts> <emoji> [flags]".to_string(),
+            usage: "slack react remove <channel> <ts> <emoji> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -652,7 +652,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Remove reaction".to_string(),
-                command: "slack-rs react remove C123 1234567890.123456 thumbsup".to_string(),
+                command: "slack react remove C123 1234567890.123456 thumbsup".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -669,7 +669,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "file upload".to_string(),
             description: "Upload a file".to_string(),
-            usage: "slack-rs file upload <path> [flags]".to_string(),
+            usage: "slack file upload <path> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -688,7 +688,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Upload file".to_string(),
-                command: "slack-rs file upload document.pdf".to_string(),
+                command: "slack file upload document.pdf".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -705,7 +705,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "file download".to_string(),
             description: "Download a file from Slack".to_string(),
-            usage: "slack-rs file download [<file_id>] [flags]".to_string(),
+            usage: "slack file download [<file_id>] [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--url".to_string(),
@@ -739,15 +739,15 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "Download by file ID".to_string(),
-                    command: "slack-rs file download F123456".to_string(),
+                    command: "slack file download F123456".to_string(),
                 },
                 ExampleDef {
                     description: "Download to stdout".to_string(),
-                    command: "slack-rs file download F123456 --out -".to_string(),
+                    command: "slack file download F123456 --out -".to_string(),
                 },
                 ExampleDef {
                     description: "Download by URL".to_string(),
-                    command: "slack-rs file download --url https://files.slack.com/...".to_string(),
+                    command: "slack file download --url https://files.slack.com/...".to_string(),
                 },
             ],
             exit_codes: vec![
@@ -765,7 +765,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "search".to_string(),
             description: "Search messages".to_string(),
-            usage: "slack-rs search <query> [flags]".to_string(),
+            usage: "slack search <query> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--count".to_string(),
@@ -791,7 +791,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Search messages".to_string(),
-                command: "slack-rs search 'important announcement'".to_string(),
+                command: "slack search 'important announcement'".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -808,11 +808,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth rename".to_string(),
             description: "Rename a profile".to_string(),
-            usage: "slack-rs auth rename <old_name> <new_name>".to_string(),
+            usage: "slack auth rename <old_name> <new_name>".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "Rename profile".to_string(),
-                command: "slack-rs auth rename work personal".to_string(),
+                command: "slack auth rename work personal".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -829,7 +829,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth export".to_string(),
             description: "Export profiles to encrypted file".to_string(),
-            usage: "slack-rs auth export [flags]".to_string(),
+            usage: "slack auth export [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -876,7 +876,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Export all profiles".to_string(),
-                command: "slack-rs auth export --all --out profiles.enc --yes".to_string(),
+                command: "slack auth export --all --out profiles.enc --yes".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -893,7 +893,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "auth import".to_string(),
             description: "Import profiles from encrypted file".to_string(),
-            usage: "slack-rs auth import [flags]".to_string(),
+            usage: "slack auth import [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--in".to_string(),
@@ -948,15 +948,15 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "Import profiles".to_string(),
-                    command: "slack-rs auth import --in profiles.enc".to_string(),
+                    command: "slack auth import --in profiles.enc".to_string(),
                 },
                 ExampleDef {
                     description: "Preview import without making changes".to_string(),
-                    command: "slack-rs auth import --in profiles.enc --dry-run".to_string(),
+                    command: "slack auth import --in profiles.enc --dry-run".to_string(),
                 },
                 ExampleDef {
                     description: "Preview import with JSON output".to_string(),
-                    command: "slack-rs auth import --in profiles.enc --dry-run --json".to_string(),
+                    command: "slack auth import --in profiles.enc --dry-run --json".to_string(),
                 },
             ],
             exit_codes: vec![
@@ -974,7 +974,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "config oauth set".to_string(),
             description: "Set OAuth configuration for a profile".to_string(),
-            usage: "slack-rs config oauth set <profile> --client-id <id> --redirect-uri <uri> --scopes <scopes> [flags]".to_string(),
+            usage: "slack config oauth set <profile> --client-id <id> --redirect-uri <uri> --scopes <scopes> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--client-id".to_string(),
@@ -1011,24 +1011,10 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
                     description: "Read secret from file".to_string(),
                     default: None,
                 },
-                FlagDef {
-                    name: "--client-secret".to_string(),
-                    flag_type: "string".to_string(),
-                    required: false,
-                    description: "Direct secret value (requires --yes, unsafe)".to_string(),
-                    default: None,
-                },
-                FlagDef {
-                    name: "--yes".to_string(),
-                    flag_type: "boolean".to_string(),
-                    required: false,
-                    description: "Confirm dangerous operation".to_string(),
-                    default: None,
-                },
             ],
             examples: vec![ExampleDef {
                 description: "Set OAuth config".to_string(),
-                command: "slack-rs config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes all".to_string(),
+                command: "slack config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes all".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1045,11 +1031,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "config oauth show".to_string(),
             description: "Show OAuth configuration for a profile".to_string(),
-            usage: "slack-rs config oauth show <profile>".to_string(),
+            usage: "slack config oauth show <profile>".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "Show OAuth config".to_string(),
-                command: "slack-rs config oauth show work".to_string(),
+                command: "slack config oauth show work".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1066,11 +1052,11 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "config oauth delete".to_string(),
             description: "Delete OAuth configuration for a profile".to_string(),
-            usage: "slack-rs config oauth delete <profile>".to_string(),
+            usage: "slack config oauth delete <profile>".to_string(),
             flags: vec![],
             examples: vec![ExampleDef {
                 description: "Delete OAuth config".to_string(),
-                command: "slack-rs config oauth delete work".to_string(),
+                command: "slack config oauth delete work".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1087,7 +1073,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "config set".to_string(),
             description: "Set default token type for a profile".to_string(),
-            usage: "slack-rs config set <profile> --token-type <type>".to_string(),
+            usage: "slack config set <profile> --token-type <type>".to_string(),
             flags: vec![FlagDef {
                 name: "--token-type".to_string(),
                 flag_type: "string".to_string(),
@@ -1097,7 +1083,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             }],
             examples: vec![ExampleDef {
                 description: "Set token type".to_string(),
-                command: "slack-rs config set work --token-type bot".to_string(),
+                command: "slack config set work --token-type bot".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1114,7 +1100,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "conv select".to_string(),
             description: "Interactively select a conversation".to_string(),
-            usage: "slack-rs conv select [flags]".to_string(),
+            usage: "slack conv select [flags]".to_string(),
             flags: vec![FlagDef {
                 name: "--profile".to_string(),
                 flag_type: "string".to_string(),
@@ -1124,7 +1110,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             }],
             examples: vec![ExampleDef {
                 description: "Select conversation".to_string(),
-                command: "slack-rs conv select".to_string(),
+                command: "slack conv select".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1141,7 +1127,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "users cache-update".to_string(),
             description: "Update user cache for mention resolution".to_string(),
-            usage: "slack-rs users cache-update [flags]".to_string(),
+            usage: "slack users cache-update [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -1160,7 +1146,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Update user cache".to_string(),
-                command: "slack-rs users cache-update".to_string(),
+                command: "slack users cache-update".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1177,7 +1163,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "users resolve-mentions".to_string(),
             description: "Resolve user mentions in text".to_string(),
-            usage: "slack-rs users resolve-mentions <text> [flags]".to_string(),
+            usage: "slack users resolve-mentions <text> [flags]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--profile".to_string(),
@@ -1196,7 +1182,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Resolve mentions".to_string(),
-                command: "slack-rs users resolve-mentions '@john said hello'".to_string(),
+                command: "slack users resolve-mentions '@john said hello'".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1213,7 +1199,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "commands".to_string(),
             description: "List all available commands in machine-readable format".to_string(),
-            usage: "slack-rs commands --json".to_string(),
+            usage: "slack commands --json".to_string(),
             flags: vec![FlagDef {
                 name: "--json".to_string(),
                 flag_type: "boolean".to_string(),
@@ -1223,7 +1209,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             }],
             examples: vec![ExampleDef {
                 description: "List commands".to_string(),
-                command: "slack-rs commands --json".to_string(),
+                command: "slack commands --json".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1240,7 +1226,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "schema".to_string(),
             description: "Show output schema for a command".to_string(),
-            usage: "slack-rs schema --command <cmd> --output json-schema".to_string(),
+            usage: "slack schema --command <cmd> --output json-schema".to_string(),
             flags: vec![
                 FlagDef {
                     name: "--command".to_string(),
@@ -1259,7 +1245,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             ],
             examples: vec![ExampleDef {
                 description: "Show schema".to_string(),
-                command: "slack-rs schema --command conv.list --output json-schema".to_string(),
+                command: "slack schema --command conv.list --output json-schema".to_string(),
             }],
             exit_codes: vec![
                 ExitCodeDef {
@@ -1276,7 +1262,7 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
         CommandDef {
             name: "install-skills".to_string(),
             description: "Install agent skill from embedded or local source".to_string(),
-            usage: "slack-rs install-skills [source] [--global]".to_string(),
+            usage: "slack install-skills [source] [--global]".to_string(),
             flags: vec![
                 FlagDef {
                     name: "source".to_string(),
@@ -1303,19 +1289,19 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
             examples: vec![
                 ExampleDef {
                     description: "Install embedded skill (default)".to_string(),
-                    command: "slack-rs install-skills".to_string(),
+                    command: "slack install-skills".to_string(),
                 },
                 ExampleDef {
                     description: "Install from local path".to_string(),
-                    command: "slack-rs install-skills local:/path/to/skill".to_string(),
+                    command: "slack install-skills local:/path/to/skill".to_string(),
                 },
                 ExampleDef {
                     description: "Install globally to ~/.agents".to_string(),
-                    command: "slack-rs install-skills --global".to_string(),
+                    command: "slack install-skills --global".to_string(),
                 },
                 ExampleDef {
                     description: "Output installation result as JSON".to_string(),
-                    command: "slack-rs install-skills --json".to_string(),
+                    command: "slack install-skills --json".to_string(),
                 },
             ],
             exit_codes: vec![
@@ -1326,23 +1312,6 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
                 ExitCodeDef {
                     code: 1,
                     description: "Failure - installation error".to_string(),
-                },
-            ],
-        },
-        // demo
-        CommandDef {
-            name: "demo".to_string(),
-            description: "Run demonstration".to_string(),
-            usage: "slack-rs demo".to_string(),
-            flags: vec![],
-            examples: vec![ExampleDef {
-                description: "Run demo".to_string(),
-                command: "slack-rs demo".to_string(),
-            }],
-            exit_codes: vec![
-                ExitCodeDef {
-                    code: 0,
-                    description: "Success".to_string(),
                 },
             ],
         },

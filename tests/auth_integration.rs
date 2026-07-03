@@ -1,11 +1,11 @@
 //! Integration tests for auth commands
 
-use slack_rs::profile::{make_token_key, TokenStore};
+use slack::profile::{make_token_key, TokenStore};
 
 #[test]
 fn test_auth_status_no_profile() {
     // This tests the status command when no profile exists
-    let result = slack_rs::auth::status(Some("nonexistent".to_string()));
+    let result = slack::auth::status(Some("nonexistent".to_string()));
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }
@@ -14,7 +14,7 @@ fn test_auth_status_no_profile() {
 fn test_auth_list_empty() {
     // This tests the list command
     // Note: This might show existing profiles if run on a system with profiles
-    let result = slack_rs::auth::list();
+    let result = slack::auth::list();
     assert!(result.is_ok());
 }
 
@@ -22,14 +22,14 @@ fn test_auth_list_empty() {
 fn test_auth_rename() {
     // Note: This test is limited because we can't easily create test profiles
     // without modifying the actual config directory
-    let result = slack_rs::auth::rename("nonexistent".to_string(), "new".to_string());
+    let result = slack::auth::rename("nonexistent".to_string(), "new".to_string());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }
 
 #[test]
 fn test_auth_logout_nonexistent() {
-    let result = slack_rs::auth::logout(Some("nonexistent".to_string()));
+    let result = slack::auth::logout(Some("nonexistent".to_string()));
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }
@@ -37,7 +37,7 @@ fn test_auth_logout_nonexistent() {
 // Test that demonstrates token storage integration
 #[test]
 fn test_token_storage_integration() {
-    use slack_rs::profile::InMemoryTokenStore;
+    use slack::profile::InMemoryTokenStore;
 
     let store = InMemoryTokenStore::new();
     let key = make_token_key("T123", "U456");
@@ -59,7 +59,7 @@ fn test_token_storage_integration() {
 // Test profile and token integration
 #[test]
 fn test_profile_with_token_storage() {
-    use slack_rs::profile::{InMemoryTokenStore, Profile, ProfilesConfig};
+    use slack::profile::{InMemoryTokenStore, Profile, ProfilesConfig};
 
     let mut config = ProfilesConfig::new();
     let profile = Profile {

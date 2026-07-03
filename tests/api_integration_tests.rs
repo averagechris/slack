@@ -8,7 +8,7 @@
 
 use httpmock::prelude::*;
 use serde_json::json;
-use slack_rs::api::{execute_api_call, ApiCallArgs, ApiCallContext, ApiClient, ApiClientConfig};
+use slack::api::{execute_api_call, ApiCallArgs, ApiCallContext, ApiClient, ApiClientConfig};
 
 #[tokio::test]
 async fn test_api_call_with_form_data() {

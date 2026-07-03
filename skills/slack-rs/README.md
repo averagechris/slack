@@ -1,14 +1,14 @@
 # slack-rs (skill)
 
-Agent skill for Slack Web API automation using the `slack-rs` CLI.
+Agent skill for Slack Web API automation using the `slack` CLI.
 
-This directory contains the skill documentation only (no bundled scripts/binaries). The `slack-rs` CLI is a separate project:
+This directory contains the skill documentation only (no bundled scripts/binaries). The `slack` CLI is a separate project:
 
-- https://github.com/tumf/slack-rs
+- https://git.sr.ht/~averagechris/slack (fork of https://github.com/tumf/slack-rs)
 
 ## What You Get
 
-- `slack-rs/SKILL.md`: day-to-day agent instructions for using `slack-rs`
+- `slack-rs/SKILL.md`: day-to-day agent instructions for using `slack`
 - `slack-rs/references/setup.md`: one-time setup and onboarding steps
 - `slack-rs/references/recipes.md`: copy/paste operational recipes
 
@@ -30,55 +30,55 @@ Alternative: load the skill file directly in your agent config:
 
 ## Prerequisites
 
-Install the `slack-rs` CLI on the machine where the agent runs.
+Install the `slack` CLI on the machine where the agent runs.
 
-This skill assumes recent versions of `slack-rs` (v0.1.40+):
+This skill assumes recent versions of `slack` (v0.1.40+):
 
 ```bash
-slack-rs --version
-slack-rs --help
+slack --version
+slack --help
 ```
 
-Tip: `slack-rs` supports machine-readable introspection:
+Tip: `slack` supports machine-readable introspection:
 
 ```bash
-slack-rs commands --json
-slack-rs conv list --help --json
-slack-rs schema --command msg.post --output json-schema
+slack commands --json
+slack conv list --help --json
+slack schema --command msg.post --output json-schema
 ```
 
 ## Using The Skill
 
-Once the skill is loaded, the agent will run `slack-rs` commands directly.
+Once the skill is loaded, the agent will run `slack` commands directly.
 
 For first-time setup, read `slack-rs/references/setup.md`.
 
 Prefer convenience commands when possible:
 
 ```bash
-slack-rs conv list
-slack-rs conv search <pattern>
-slack-rs conv history <channel_id>
-slack-rs thread get <channel_id> <thread_ts>
+slack conv list
+slack conv search <pattern>
+slack conv history <channel_id>
+slack thread get <channel_id> <thread_ts>
 
-slack-rs msg post <channel_id> "Hello"
+slack msg post <channel_id> "Hello"
 ```
 
 For anything else, use the generic method runner:
 
 ```bash
-slack-rs api call <method> [params...]
+slack api call <method> [params...]
 ```
 
 ## Credentials And Storage
 
-`slack-rs` stores profiles, OAuth config, and tokens under `~/.config/slack-rs/`. Treat this directory as a secret.
+`slack` stores profiles, OAuth config, and tokens under `~/.config/slack-rs/`. Treat this directory as a secret.
 
 For backup/migration, refer to:
 
 ```bash
-slack-rs auth export --help
-slack-rs auth import --help
+slack auth export --help
+slack auth import --help
 ```
 
 ## Write Safety Guard
