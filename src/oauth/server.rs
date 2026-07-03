@@ -20,6 +20,11 @@ pub struct CallbackResult {
 ///
 /// Returns the authorization code and state received from the callback
 ///
+/// Requests carrying a wrong `state` value are rejected with an error page
+/// but do NOT abort the login: the server keeps waiting for the correct
+/// callback until the timeout expires. This prevents a trivial DoS when the
+/// callback endpoint is reachable by third parties (e.g. via a tunnel).
+///
 /// # Arguments
 /// * `port` - Port to listen on (typically 3000)
 /// * `expected_state` - Expected state value for CSRF verification
@@ -66,44 +71,62 @@ pub async fn run_callback_server(
             let request = String::from_utf8_lossy(&buffer[..n]);
 
             // Parse the request line
-            if let Some(first_line) = request.lines().next() {
-                if let Some(path_part) = first_line.split_whitespace().nth(1) {
-                    if let Some(query_start) = path_part.find('?') {
-                        let query = &path_part[query_start + 1..];
-                        let params = parse_query_string(query);
+            let path_part = match request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+            {
+                Some(p) => p,
+                None => continue,
+            };
 
-                        let response = if let (Some(code), Some(state)) =
-                            (params.get("code"), params.get("state"))
-                        {
-                            // Verify state
-                            if state != &expected_state {
-                                let mut res = server_result.lock().unwrap();
-                                *res = Some(Err(OAuthError::StateMismatch {
-                                    expected: expected_state.clone(),
-                                    actual: state.clone(),
-                                }));
-                                create_error_response("State mismatch - possible CSRF attack")
-                            } else {
-                                let mut res = server_result.lock().unwrap();
-                                *res = Some(Ok(CallbackResult {
-                                    code: code.clone(),
-                                    state: state.clone(),
-                                }));
-                                create_success_response()
-                            }
-                        } else if let Some(error) = params.get("error") {
-                            let mut res = server_result.lock().unwrap();
-                            *res = Some(Err(OAuthError::SlackError(error.clone())));
-                            create_error_response(&format!("OAuth error: {}", error))
-                        } else {
-                            create_error_response("Missing required parameters")
-                        };
-
-                        let _ = socket.write_all(response.as_bytes()).await;
-                        let _ = socket.flush().await;
-                        break;
-                    }
+            let query = match path_part.find('?') {
+                Some(query_start) => &path_part[query_start + 1..],
+                None => {
+                    // Not a callback request (e.g. favicon); reject and keep waiting
+                    let response = create_error_response("Missing required parameters");
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.flush().await;
+                    continue;
                 }
+            };
+
+            let params = parse_query_string(query);
+
+            // Whether this request terminates the server loop
+            let mut done = false;
+
+            let response =
+                if let (Some(code), Some(state)) = (params.get("code"), params.get("state")) {
+                    // Verify state in constant time
+                    if !constant_time_eq(state.as_bytes(), expected_state.as_bytes()) {
+                        // Wrong state: reject this request but keep waiting for the
+                        // legitimate callback (do not abort the login).
+                        create_error_response("State mismatch - request rejected")
+                    } else {
+                        let mut res = server_result.lock().unwrap();
+                        *res = Some(Ok(CallbackResult {
+                            code: code.clone(),
+                            state: state.clone(),
+                        }));
+                        done = true;
+                        create_success_response()
+                    }
+                } else if let Some(error) = params.get("error") {
+                    let mut res = server_result.lock().unwrap();
+                    *res = Some(Err(OAuthError::SlackError(error.clone())));
+                    done = true;
+                    create_error_response(&format!("OAuth error: {}", error))
+                } else {
+                    // Missing parameters: reject and keep waiting
+                    create_error_response("Missing required parameters")
+                };
+
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.flush().await;
+
+            if done {
+                break;
             }
         }
     };
@@ -125,6 +148,20 @@ pub async fn run_callback_server(
     }
 }
 
+/// Constant-time byte-slice equality (length check + byte-wise OR-fold)
+///
+/// Note: the length comparison itself is not constant-time, which is
+/// acceptable — the state length is public knowledge.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// Helper function to format OAuthError for re-creation
 fn format_oauth_error(err: &OAuthError) -> OAuthError {
     match err {
@@ -133,10 +170,7 @@ fn format_oauth_error(err: &OAuthError) -> OAuthError {
         OAuthError::HttpError(code, msg) => OAuthError::HttpError(*code, msg.clone()),
         OAuthError::ParseError(msg) => OAuthError::ParseError(msg.clone()),
         OAuthError::SlackError(msg) => OAuthError::SlackError(msg.clone()),
-        OAuthError::StateMismatch { expected, actual } => OAuthError::StateMismatch {
-            expected: expected.clone(),
-            actual: actual.clone(),
-        },
+        OAuthError::StateMismatch => OAuthError::StateMismatch,
         OAuthError::ServerError(msg) => OAuthError::ServerError(msg.clone()),
         OAuthError::BrowserError(msg) => OAuthError::BrowserError(msg.clone()),
     }
@@ -149,10 +183,7 @@ fn parse_query_string(query: &str) -> HashMap<String, String> {
         .filter_map(|pair| {
             let mut parts = pair.split('=');
             match (parts.next(), parts.next()) {
-                (Some(key), Some(value)) => Some((
-                    key.to_string(),
-                    urlencoding::decode(value).ok()?.to_string(),
-                )),
+                (Some(key), Some(value)) => Some((key.to_string(), urlencoding::decode(value)?)),
                 _ => None,
             }
         })
@@ -191,38 +222,38 @@ fn create_error_response(message: &str) -> String {
     )
 }
 
-// Note: urlencoding is used for URL decoding
-// We need to add this dependency
+/// Minimal percent-decoding for query parameters (no external dependency)
 mod urlencoding {
-    pub fn decode(s: &str) -> Result<String, ()> {
-        // Simple URL decode implementation
-        let mut result = String::new();
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            match c {
-                '%' => {
-                    let hex: String = chars.by_ref().take(2).collect();
-                    if hex.len() == 2 {
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            result.push(byte as char);
-                        } else {
-                            return Err(());
-                        }
-                    } else {
-                        return Err(());
-                    }
+    /// Decode a percent-encoded string, treating `+` as space.
+    ///
+    /// Decodes into a byte buffer first so multibyte UTF-8 sequences are
+    /// reassembled correctly, then validates the result as UTF-8. Returns
+    /// `None` for malformed percent-escapes or invalid UTF-8.
+    pub fn decode(s: &str) -> Option<String> {
+        let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
+        let mut input = s.as_bytes().iter();
+        while let Some(&b) = input.next() {
+            match b {
+                b'%' => {
+                    let hi = *input.next()?;
+                    let lo = *input.next()?;
+                    let hex = [hi, lo];
+                    let hex_str = std::str::from_utf8(&hex).ok()?;
+                    let byte = u8::from_str_radix(hex_str, 16).ok()?;
+                    bytes.push(byte);
                 }
-                '+' => result.push(' '),
-                c => result.push(c),
+                b'+' => bytes.push(b' '),
+                other => bytes.push(other),
             }
         }
-        Ok(result)
+        String::from_utf8(bytes).ok()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpStream;
 
     #[test]
     fn test_parse_query_string() {
@@ -243,6 +274,34 @@ mod tests {
         assert_eq!(params.get("name"), Some(&"test user".to_string()));
     }
 
+    #[test]
+    fn test_parse_query_string_multibyte_utf8() {
+        // "あ" (U+3042) percent-encoded as UTF-8, and "é" (U+00E9)
+        let query = "name=%E3%81%82&city=caf%C3%A9";
+        let params = parse_query_string(query);
+
+        assert_eq!(params.get("name"), Some(&"あ".to_string()));
+        assert_eq!(params.get("city"), Some(&"café".to_string()));
+    }
+
+    #[test]
+    fn test_urlencoding_decode_invalid_utf8_is_rejected() {
+        // 0xFF is never valid in UTF-8
+        assert_eq!(urlencoding::decode("%FF"), None);
+        // Truncated escape
+        assert_eq!(urlencoding::decode("%E3%8"), None);
+        // Non-hex escape
+        assert_eq!(urlencoding::decode("%ZZ"), None);
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
     #[tokio::test]
     async fn test_callback_server_timeout() {
         // Test that the server times out appropriately
@@ -257,5 +316,66 @@ mod tests {
             }
             _ => panic!("Expected ServerError with timeout"),
         }
+    }
+
+    /// Find a free localhost port by binding to port 0 and dropping the listener.
+    async fn free_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    async fn send_request(port: u16, path: &str) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let request = format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", path);
+        stream.write_all(request.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        String::from_utf8_lossy(&response).to_string()
+    }
+
+    #[tokio::test]
+    async fn test_wrong_state_then_correct_state_succeeds() {
+        let port = free_port().await;
+        let expected_state = "correct_state".to_string();
+
+        let server = tokio::spawn(run_callback_server(port, expected_state, 10));
+
+        // Give the server a moment to bind
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 1. Wrong-state request: must be rejected but NOT abort the login
+        let response = send_request(port, "/callback?code=evil_code&state=wrong_state").await;
+        assert!(response.contains("400 Bad Request"), "got: {}", response);
+        // Error page must not leak the expected state value
+        assert!(!response.contains("correct_state"));
+
+        // 2. Correct-state request: must succeed
+        let response = send_request(port, "/callback?code=good_code&state=correct_state").await;
+        assert!(response.contains("200 OK"), "got: {}", response);
+
+        let result = server.await.unwrap().unwrap();
+        assert_eq!(result.code, "good_code");
+        assert_eq!(result.state, "correct_state");
+    }
+
+    #[tokio::test]
+    async fn test_missing_params_then_correct_state_succeeds() {
+        let port = free_port().await;
+        let expected_state = "state123".to_string();
+
+        let server = tokio::spawn(run_callback_server(port, expected_state, 10));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Request with query but no code/state: rejected, server keeps waiting
+        let response = send_request(port, "/callback?foo=bar").await;
+        assert!(response.contains("400 Bad Request"));
+
+        // Correct callback still succeeds
+        let response = send_request(port, "/callback?code=abc&state=state123").await;
+        assert!(response.contains("200 OK"));
+
+        let result = server.await.unwrap().unwrap();
+        assert_eq!(result.code, "abc");
     }
 }

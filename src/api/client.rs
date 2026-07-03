@@ -149,6 +149,9 @@ impl ApiClient {
     }
 
     /// Call a Slack API method using the ApiMethod enum (for wrapper commands)
+    ///
+    /// Uses the same 429/Retry-After + exponential backoff retry behavior as
+    /// the generic `call()` path.
     pub async fn call_method(
         &self,
         method: ApiMethod,
@@ -161,34 +164,36 @@ impl ApiClient {
 
         let url = format!("{}/{}", self.config.base_url, method.as_str());
 
-        let response = if method.uses_get_method() {
-            // Use GET request with query parameters
-            let mut query_params = vec![];
-            for (key, value) in params {
+        // Prepare request inputs once so each retry attempt builds a fresh request
+        let query_params: Option<Vec<(String, String)>> = if method.uses_get_method() {
+            let mut qp = vec![];
+            for (key, value) in &params {
                 let value_str = match value {
-                    Value::String(s) => s,
+                    Value::String(s) => s.clone(),
                     Value::Number(n) => n.to_string(),
                     Value::Bool(b) => b.to_string(),
-                    _ => serde_json::to_string(&value).unwrap_or_default(),
+                    _ => serde_json::to_string(value).unwrap_or_default(),
                 };
-                query_params.push((key, value_str));
+                qp.push((key.clone(), value_str));
             }
-
-            self.client
-                .get(&url)
-                .bearer_auth(token)
-                .query(&query_params)
-                .send()
-                .await?
+            Some(qp)
         } else {
-            // Use POST request with JSON body
-            self.client
-                .post(&url)
-                .bearer_auth(token)
-                .json(&params)
-                .send()
-                .await?
+            None
         };
+
+        let response = self
+            .send_with_retry(|| match &query_params {
+                Some(qp) => self.client.get(&url).bearer_auth(token).query(qp),
+                None => self.client.post(&url).bearer_auth(token).json(&params),
+            })
+            .await
+            .map_err(|e| match e {
+                ApiClientError::RequestFailed(e) => ApiError::RequestFailed(e),
+                ApiClientError::RateLimitExceeded(secs) => {
+                    ApiError::SlackError(format!("rate_limited: retry after {} seconds", secs))
+                }
+                other => ApiError::SlackError(other.to_string()),
+            })?;
 
         let response_json: ApiResponse = response.json().await?;
 
@@ -216,12 +221,24 @@ impl ApiClient {
         query_params: Vec<(String, String)>,
     ) -> Result<Response> {
         let url = format!("{}/{}", self.config.base_url, endpoint);
+
+        self.send_with_retry(|| self.build_request(&url, &method, token, &body, &query_params))
+            .await
+    }
+
+    /// Send a request with 429/Retry-After handling and exponential backoff
+    ///
+    /// Shared retry loop used by both `call()` (generic API calls) and
+    /// `call_method()` (wrapper commands). `build_request` is invoked once per
+    /// attempt to construct a fresh request.
+    async fn send_with_retry<F>(&self, build_request: F) -> Result<Response>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
         let mut attempt = 0;
 
         loop {
-            let response = self
-                .execute_request(&url, &method, token, &body, &query_params)
-                .await?;
+            let response = build_request().send().await?;
 
             // Check for rate limiting
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
@@ -250,15 +267,15 @@ impl ApiClient {
         }
     }
 
-    /// Execute a single HTTP request
-    async fn execute_request(
+    /// Build a single HTTP request (one retry attempt)
+    fn build_request(
         &self,
         url: &str,
         method: &Method,
         token: &str,
         body: &RequestBody,
         query_params: &[(String, String)],
-    ) -> Result<Response> {
+    ) -> reqwest::RequestBuilder {
         let mut request = self.client.request(method.clone(), url);
 
         // Add authorization header
@@ -284,8 +301,7 @@ impl ApiClient {
             RequestBody::None => {}
         }
 
-        let response = request.send().await?;
-        Ok(response)
+        request
     }
 
     /// Extract Retry-After header value
@@ -427,5 +443,172 @@ mod tests {
         let client = ApiClient::with_config(config.clone());
         assert_eq!(client.base_url(), "https://test.example.com");
         assert_eq!(client.config.max_retries, 5);
+    }
+
+    mod retry_tests {
+        use super::*;
+        use wiremock::matchers::{method as http_method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        #[tokio::test]
+        async fn test_call_method_retries_on_429_then_succeeds() {
+            let server = MockServer::start().await;
+
+            // First request: rate limited
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+                .up_to_n_times(1)
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            // Subsequent request: success
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let client = ApiClient::new_with_base_url("xoxb-test".to_string(), server.uri());
+            let mut params = HashMap::new();
+            params.insert("channel".to_string(), Value::String("C123".to_string()));
+            params.insert("text".to_string(), Value::String("hello".to_string()));
+
+            let response = client
+                .call_method(ApiMethod::ChatPostMessage, params)
+                .await
+                .expect("call_method should retry after 429 and succeed");
+            assert!(response.ok);
+        }
+
+        #[tokio::test]
+        async fn test_call_method_get_retries_on_429_then_succeeds() {
+            let server = MockServer::start().await;
+
+            Mock::given(http_method("GET"))
+                .and(path("/users.info"))
+                .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+                .up_to_n_times(1)
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            Mock::given(http_method("GET"))
+                .and(path("/users.info"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let client = ApiClient::new_with_base_url("xoxb-test".to_string(), server.uri());
+            let mut params = HashMap::new();
+            params.insert("user".to_string(), Value::String("U123".to_string()));
+
+            let response = client
+                .call_method(ApiMethod::UsersInfo, params)
+                .await
+                .expect("GET call_method should retry after 429 and succeed");
+            assert!(response.ok);
+        }
+
+        #[tokio::test]
+        async fn test_call_method_429_retries_exhausted() {
+            let server = MockServer::start().await;
+
+            // Always rate limited
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+                // initial attempt + max_retries (3) = 4 requests
+                .expect(4)
+                .mount(&server)
+                .await;
+
+            let client = ApiClient::new_with_base_url("xoxb-test".to_string(), server.uri());
+            let mut params = HashMap::new();
+            params.insert("channel".to_string(), Value::String("C123".to_string()));
+
+            let result = client.call_method(ApiMethod::ChatPostMessage, params).await;
+            match result {
+                Err(ApiError::SlackError(msg)) => {
+                    assert!(msg.contains("rate_limited"), "got: {}", msg);
+                }
+                other => panic!("Expected SlackError(rate_limited), got: {:?}", other.err()),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_call_retries_on_429_then_succeeds() {
+            let server = MockServer::start().await;
+
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+                .up_to_n_times(1)
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let client = ApiClient::with_config(ApiClientConfig {
+                base_url: server.uri(),
+                ..Default::default()
+            });
+
+            let response = client
+                .call(
+                    Method::POST,
+                    "chat.postMessage",
+                    "xoxb-test",
+                    RequestBody::Json(serde_json::json!({"channel": "C123"})),
+                    vec![],
+                )
+                .await
+                .expect("call should retry after 429 and succeed");
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn test_call_429_retries_exhausted_returns_rate_limit_error() {
+            let server = MockServer::start().await;
+
+            Mock::given(http_method("POST"))
+                .and(path("/chat.postMessage"))
+                .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+                .expect(4)
+                .mount(&server)
+                .await;
+
+            let client = ApiClient::with_config(ApiClientConfig {
+                base_url: server.uri(),
+                ..Default::default()
+            });
+
+            let result = client
+                .call(
+                    Method::POST,
+                    "chat.postMessage",
+                    "xoxb-test",
+                    RequestBody::None,
+                    vec![],
+                )
+                .await;
+
+            assert!(matches!(result, Err(ApiClientError::RateLimitExceeded(_))));
+        }
     }
 }

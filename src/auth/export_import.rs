@@ -475,26 +475,21 @@ fn check_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Write file with secure permissions (Unix: 0600)
+/// Write file with secure permissions (Unix: created atomically with 0600)
+///
+/// Writes to a temp file created with mode 0600 in the same directory, then
+/// renames it over the target: the data is never readable by other users —
+/// not even briefly — and the target is never left partially written.
 #[cfg(unix)]
 fn write_secure_file(path: &Path, data: &[u8]) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    // Write file
-    fs::write(path, data)?;
-
-    // Set permissions to 0600
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
-
+    crate::profile::storage::write_atomic_0600(path, data)?;
     Ok(())
 }
 
-/// Write file with secure permissions (non-Unix - no permission setting)
+/// Write file with secure permissions (non-Unix - atomic write, no permission setting)
 #[cfg(not(unix))]
 fn write_secure_file(path: &Path, data: &[u8]) -> Result<()> {
-    fs::write(path, data)?;
+    crate::profile::storage::write_atomic_0600(path, data)?;
     Ok(())
 }
 
@@ -611,6 +606,30 @@ mod tests {
         let mode = metadata.permissions().mode();
 
         assert_eq!(mode & 0o777, 0o600, "File should have 0600 permissions");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_secure_file_overwrite_keeps_0600_and_no_temp_leftovers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("secure.dat");
+
+        write_secure_file(&file_path, b"first").unwrap();
+        write_secure_file(&file_path, b"second").unwrap();
+
+        let metadata = fs::metadata(&file_path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(&file_path).unwrap(), b"second");
+
+        // No temp files left behind in the directory
+        let leftovers: Vec<_> = fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind");
     }
 
     #[test]

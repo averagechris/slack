@@ -20,8 +20,8 @@ pub enum OAuthError {
     #[error("Slack API error: {0}")]
     SlackError(String),
 
-    #[error("State mismatch: expected {expected}, got {actual}")]
-    StateMismatch { expected: String, actual: String },
+    #[error("State mismatch: callback state did not match the expected value (possible CSRF)")]
+    StateMismatch,
 
     #[error("Callback server error: {0}")]
     ServerError(String),
@@ -183,6 +183,16 @@ mod tests {
             Err(OAuthError::ConfigError(msg)) => assert!(msg.contains("scopes")),
             _ => panic!("Expected ConfigError"),
         }
+    }
+
+    #[test]
+    fn test_state_mismatch_display_does_not_leak_state() {
+        let err = OAuthError::StateMismatch;
+        // Variant carries no state values by construction; message is fixed
+        assert_eq!(
+            err.to_string(),
+            "State mismatch: callback state did not match the expected value (possible CSRF)"
+        );
     }
 
     #[test]

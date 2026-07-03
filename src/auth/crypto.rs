@@ -6,10 +6,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
-use argon2::{
-    password_hash::{PasswordHasher, SaltString},
-    Argon2,
-};
+use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 use thiserror::Error;
 
@@ -55,36 +52,30 @@ pub struct EncryptedData {
 }
 
 /// Derive encryption key from passphrase using Argon2id
+///
+/// Uses the KDF parameters provided by the caller (e.g. read from an export
+/// file header) rather than crate defaults, so old exports remain decryptable
+/// even if the `argon2` crate defaults change.
 pub fn derive_key(passphrase: &str, params: &KdfParams) -> Result<[u8; 32]> {
     if passphrase.is_empty() {
         return Err(CryptoError::InvalidPassphrase);
     }
 
-    let argon2 = Argon2::default();
+    let argon2_params = Params::new(
+        params.memory_cost,
+        params.time_cost,
+        params.parallelism,
+        Some(32),
+    )
+    .map_err(|e| CryptoError::KeyDerivationFailed(format!("Invalid KDF parameters: {}", e)))?;
 
-    // Convert salt to SaltString format
-    let salt_string = SaltString::encode_b64(&params.salt)
-        .map_err(|e| CryptoError::KeyDerivationFailed(e.to_string()))?;
-
-    // Hash the password
-    let password_hash = argon2
-        .hash_password(passphrase.as_bytes(), &salt_string)
-        .map_err(|e| CryptoError::KeyDerivationFailed(e.to_string()))?;
-
-    // Extract the hash bytes (first 32 bytes)
-    let hash_bytes = password_hash
-        .hash
-        .ok_or_else(|| CryptoError::KeyDerivationFailed("No hash generated".to_string()))?;
-
-    let hash_slice = hash_bytes.as_bytes();
-    if hash_slice.len() < 32 {
-        return Err(CryptoError::KeyDerivationFailed(
-            "Hash too short".to_string(),
-        ));
-    }
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
 
     let mut key = [0u8; 32];
-    key.copy_from_slice(&hash_slice[..32]);
+    argon2
+        .hash_password_into(passphrase.as_bytes(), &params.salt, &mut key)
+        .map_err(|e| CryptoError::KeyDerivationFailed(e.to_string()))?;
+
     Ok(key)
 }
 
@@ -231,5 +222,113 @@ mod tests {
             encrypted1.nonce, encrypted2.nonce,
             "Nonces should be unique"
         );
+    }
+
+    #[test]
+    fn test_round_trip_with_non_default_params() {
+        let passphrase = "test_password";
+        let plaintext = b"sensitive data";
+
+        let params = KdfParams {
+            salt: generate_salt(),
+            memory_cost: 8192, // non-default
+            time_cost: 3,      // non-default
+            parallelism: 2,    // non-default
+        };
+
+        let key = derive_key(passphrase, &params).unwrap();
+        let encrypted = encrypt(plaintext, &key).unwrap();
+
+        // Re-derive with the same (non-default) params, as import would
+        let key2 = derive_key(passphrase, &params).unwrap();
+        let decrypted = decrypt(&encrypted, &key2).unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_non_default_params_produce_different_key() {
+        let passphrase = "test_password";
+        let salt = generate_salt();
+
+        let default_params = KdfParams {
+            salt: salt.clone(),
+            ..Default::default()
+        };
+        let custom_params = KdfParams {
+            salt,
+            memory_cost: 8192,
+            time_cost: 3,
+            parallelism: 2,
+        };
+
+        let key_default = derive_key(passphrase, &default_params).unwrap();
+        let key_custom = derive_key(passphrase, &custom_params).unwrap();
+
+        assert_ne!(
+            key_default, key_custom,
+            "Different KDF params must produce different keys (params must not be ignored)"
+        );
+    }
+
+    #[test]
+    fn test_decrypt_fails_gracefully_with_mismatched_params() {
+        let passphrase = "test_password";
+        let plaintext = b"secret";
+        let salt = generate_salt();
+
+        let encrypt_params = KdfParams {
+            salt: salt.clone(),
+            memory_cost: 8192,
+            time_cost: 3,
+            parallelism: 2,
+        };
+        let key = derive_key(passphrase, &encrypt_params).unwrap();
+        let encrypted = encrypt(plaintext, &key).unwrap();
+
+        // Derive with mismatched (default) params: must error, not panic
+        let wrong_params = KdfParams {
+            salt,
+            ..Default::default()
+        };
+        let wrong_key = derive_key(passphrase, &wrong_params).unwrap();
+        let result = decrypt(&encrypted, &wrong_key);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::DecryptionFailed(_)
+        ));
+    }
+
+    #[test]
+    fn test_default_params_round_trip_still_works() {
+        let passphrase = "test_password";
+        let plaintext = b"legacy export";
+
+        let params = KdfParams {
+            salt: generate_salt(),
+            ..Default::default()
+        };
+
+        let key = derive_key(passphrase, &params).unwrap();
+        let encrypted = encrypt(plaintext, &key).unwrap();
+        let decrypted = decrypt(&encrypted, &key).unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_derive_key_invalid_params_error_not_panic() {
+        // parallelism of 0 is invalid for Argon2
+        let params = KdfParams {
+            salt: generate_salt(),
+            memory_cost: 8192,
+            time_cost: 1,
+            parallelism: 0,
+        };
+        let result = derive_key("password", &params);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::KeyDerivationFailed(_)
+        ));
     }
 }

@@ -124,12 +124,39 @@ pub fn load_config(path: &Path) -> Result<ProfilesConfig> {
         return Ok(ProfilesConfig::new());
     }
 
+    // If the existing file is readable by group/other, tighten to 0600.
+    tighten_permissions(path);
+
     let content = fs::read_to_string(path)?;
     let config: ProfilesConfig = serde_json::from_str(&content)?;
     Ok(config)
 }
 
+/// Tighten permissions of an existing file to 0600 if group/other bits are set
+/// (Unix only; best-effort — loading proceeds even if tightening fails)
+#[cfg(unix)]
+fn tighten_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.permissions().mode();
+        if mode & 0o077 != 0 {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            let _ = fs::set_permissions(path, permissions);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn tighten_permissions(_path: &Path) {}
+
 /// Save profiles config to a file
+///
+/// The file is created atomically with 0600 permissions on Unix: content is
+/// written to a temp file in the same directory (created with mode 0600) and
+/// then renamed over the target, so the config is never world-readable — not
+/// even briefly — and never partially written.
 pub fn save_config(path: &Path, config: &ProfilesConfig) -> Result<()> {
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
@@ -137,7 +164,70 @@ pub fn save_config(path: &Path, config: &ProfilesConfig) -> Result<()> {
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    fs::write(path, content)?;
+    write_atomic_0600(path, content.as_bytes())?;
+    Ok(())
+}
+
+/// Atomically write `data` to `path` with 0600 permissions (Unix)
+///
+/// Shared by profile config storage and export/import secure file writes.
+#[cfg(unix)]
+pub(crate) fn write_atomic_0600(path: &Path, data: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+
+    // Create a unique temp file in the same directory with 0600 from the start
+    let mut last_err = None;
+    for _ in 0..16 {
+        let tmp_path = dir.join(format!(".{}.tmp.{:08x}", file_name, rand::random::<u32>()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+                drop(file);
+                if let Err(e) = fs::rename(&tmp_path, path) {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::other("failed to create unique temp file")))
+}
+
+/// Atomically write `data` to `path` (non-Unix: no permission handling)
+#[cfg(not(unix))]
+pub(crate) fn write_atomic_0600(path: &Path, data: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+    let tmp_path = dir.join(format!(".{}.tmp.{:08x}", file_name, rand::random::<u32>()));
+    fs::write(&tmp_path, data)?;
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -334,5 +424,96 @@ mod tests {
         // Load from new path should work
         let loaded = load_config(&new_path).unwrap();
         assert_eq!(config, loaded);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_config_creates_file_with_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("profiles.json");
+
+        let config = ProfilesConfig::new();
+        save_config(&config_path, &config).unwrap();
+
+        let mode = fs::metadata(&config_path).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "profiles.json should be created with 0600, got {:o}",
+            mode & 0o777
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_config_overwrite_keeps_0600_and_content() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("profiles.json");
+
+        let mut config = ProfilesConfig::new();
+        save_config(&config_path, &config).unwrap();
+
+        config.set(
+            "p1".to_string(),
+            Profile {
+                team_id: "T1".to_string(),
+                user_id: "U1".to_string(),
+                team_name: None,
+                user_name: None,
+                client_id: None,
+                redirect_uri: None,
+                scopes: None,
+                bot_scopes: None,
+                user_scopes: None,
+                default_token_type: None,
+            },
+        );
+        save_config(&config_path, &config).unwrap();
+
+        let mode = fs::metadata(&config_path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        let loaded = load_config(&config_path).unwrap();
+        assert_eq!(config, loaded);
+
+        // No temp files left behind
+        let leftovers: Vec<_> = fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_config_tightens_loose_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("profiles.json");
+
+        let config = ProfilesConfig::new();
+        save_config(&config_path, &config).unwrap();
+
+        // Loosen permissions to simulate a legacy/world-readable file
+        let mut permissions = fs::metadata(&config_path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&config_path, permissions).unwrap();
+
+        // Loading must succeed and tighten to 0600
+        let loaded = load_config(&config_path).unwrap();
+        assert_eq!(config, loaded);
+
+        let mode = fs::metadata(&config_path).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "load_config should tighten loose permissions to 0600"
+        );
     }
 }
