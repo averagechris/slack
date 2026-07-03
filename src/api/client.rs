@@ -77,8 +77,18 @@ pub struct ApiClientConfig {
 
 impl Default for ApiClientConfig {
     fn default() -> Self {
+        // Test-only escape hatch mirroring SLACK_KEYRING_MOCK: debug builds
+        // honor SLACK_API_BASE_URL so integration tests can point commands
+        // (including spawned binaries) at a local mock server instead of
+        // slack.com. Release builds ignore it.
+        #[cfg(debug_assertions)]
+        let base_url = std::env::var("SLACK_API_BASE_URL")
+            .unwrap_or_else(|_| "https://slack.com/api".to_string());
+        #[cfg(not(debug_assertions))]
+        let base_url = "https://slack.com/api".to_string();
+
         Self {
-            base_url: "https://slack.com/api".to_string(),
+            base_url,
             max_retries: 3,
             initial_backoff_ms: 1000,
             max_backoff_ms: 32000,

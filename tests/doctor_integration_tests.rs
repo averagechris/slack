@@ -16,7 +16,7 @@ fn setup_test_env() -> (TempDir, String) {
     // Set environment variables to use temp directories
     let config_path = config_dir.join("profiles.json");
 
-    env::set_var("XDG_CONFIG_HOME", config_dir.to_str().unwrap());
+    env::set_var("SLACK_RS_CONFIG_PATH", &config_path);
 
     // Create a test profile
     let mut config = ProfilesConfig::new();
@@ -35,10 +35,10 @@ fn setup_test_env() -> (TempDir, String) {
     config.set("test_profile".to_string(), profile);
     save_config(&config_path, &config).unwrap();
 
-    // Create token store with dummy tokens
+    // Create token store with dummy tokens (production key formats)
     let token_store = slack::profile::create_token_store().unwrap();
     let bot_key = slack::profile::make_token_key("T123ABC", "U456DEF");
-    let user_key = format!("{}_user", bot_key);
+    let user_key = format!("{}:user", bot_key);
 
     // Store tokens with realistic-looking values
     token_store
@@ -49,6 +49,101 @@ fn setup_test_env() -> (TempDir, String) {
         .unwrap();
 
     (temp_dir, config_path.display().to_string())
+}
+
+/// Remove the environment/keyring state installed by `setup_test_env`.
+fn teardown_test_env() {
+    let token_store = slack::profile::create_token_store().unwrap();
+    let bot_key = slack::profile::make_token_key("T123ABC", "U456DEF");
+    token_store.delete(&bot_key).ok();
+    token_store.delete(&format!("{}:user", bot_key)).ok();
+    env::remove_var("SLACK_RS_CONFIG_PATH");
+}
+
+/// End-to-end diagnostics collection: doctor must find both tokens using
+/// the production key formats (`{team}:{user}` and `{team}:{user}:user`).
+#[test]
+#[serial_test::serial]
+fn test_collect_diagnostics_reports_existing_tokens() {
+    let (_temp_dir, config_path) = setup_test_env();
+
+    let info = slack::commands::doctor::collect_diagnostics("test_profile").unwrap();
+
+    assert_eq!(info.config_path, config_path);
+    assert_eq!(info.token_store.backend, "keyring");
+    assert!(info.token_store.location.contains("keyring service"));
+    assert!(
+        info.tokens.bot_token_exists,
+        "doctor must detect the bot token"
+    );
+    assert!(
+        info.tokens.user_token_exists,
+        "doctor must detect the user token stored under the ':user' key"
+    );
+    // No hints when tokens are present
+    assert!(info.scope_hints.is_empty());
+
+    teardown_test_env();
+}
+
+/// Diagnostics with a profile but no stored tokens: hint the user to log in.
+#[test]
+#[serial_test::serial]
+fn test_collect_diagnostics_without_tokens_hints_login() {
+    let (_temp_dir, _config_path) = setup_test_env();
+
+    // Remove the tokens seeded by setup
+    let token_store = slack::profile::create_token_store().unwrap();
+    let bot_key = slack::profile::make_token_key("T123ABC", "U456DEF");
+    token_store.delete(&bot_key).unwrap();
+    token_store.delete(&format!("{}:user", bot_key)).unwrap();
+
+    let info = slack::commands::doctor::collect_diagnostics("test_profile").unwrap();
+
+    assert!(!info.tokens.bot_token_exists);
+    assert!(!info.tokens.user_token_exists);
+    assert!(info
+        .scope_hints
+        .iter()
+        .any(|h| h.contains("No tokens found")));
+
+    teardown_test_env();
+}
+
+/// Diagnostics for a missing profile: error listing available profiles.
+#[test]
+#[serial_test::serial]
+fn test_collect_diagnostics_unknown_profile_errors() {
+    let (_temp_dir, _config_path) = setup_test_env();
+
+    let err = slack::commands::doctor::collect_diagnostics("nope").unwrap_err();
+    assert!(err.contains("Profile 'nope' not found"));
+    assert!(err.contains("test_profile"));
+
+    teardown_test_env();
+}
+
+/// Diagnostics with no config file at all: empty status plus setup hint.
+#[test]
+#[serial_test::serial]
+fn test_collect_diagnostics_no_config() {
+    slack::profile::use_mock_keyring();
+    let temp_dir = TempDir::new().unwrap();
+    env::set_var(
+        "SLACK_RS_CONFIG_PATH",
+        temp_dir.path().join("does-not-exist.json"),
+    );
+
+    let info = slack::commands::doctor::collect_diagnostics("default").unwrap();
+
+    assert!(!info.tokens.bot_token_exists);
+    assert!(!info.tokens.user_token_exists);
+    assert!(info
+        .scope_hints
+        .iter()
+        .any(|h| h.contains("No profiles configured")));
+
+    env::remove_var("SLACK_RS_CONFIG_PATH");
 }
 
 #[test]

@@ -704,6 +704,18 @@ pub async fn login(
 /// # Arguments
 /// * `profile_name` - Optional profile name (defaults to "default")
 pub fn status(profile_name: Option<String>) -> Result<(), String> {
+    let report = status_report(profile_name)?;
+    print!("{}", report);
+    Ok(())
+}
+
+/// Build the `auth status` report text.
+///
+/// Separated from [`status`] so tests can assert the report contents
+/// (token availability, default token type, ...) without capturing stdout.
+fn status_report(profile_name: Option<String>) -> Result<String, String> {
+    use std::fmt::Write as _;
+
     let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
 
     let config_path = default_config_path().map_err(|e| e.to_string())?;
@@ -713,21 +725,23 @@ pub fn status(profile_name: Option<String>) -> Result<(), String> {
         .get(&profile_name)
         .ok_or_else(|| format!("Profile '{}' not found", profile_name))?;
 
-    println!("Profile: {}", profile_name);
-    println!("Team ID: {}", profile.team_id);
-    println!("User ID: {}", profile.user_id);
+    let mut out = String::new();
+    let _ = writeln!(out, "Profile: {}", profile_name);
+    let _ = writeln!(out, "Team ID: {}", profile.team_id);
+    let _ = writeln!(out, "User ID: {}", profile.user_id);
     if let Some(team_name) = &profile.team_name {
-        println!("Team Name: {}", team_name);
+        let _ = writeln!(out, "Team Name: {}", team_name);
     }
     if let Some(user_name) = &profile.user_name {
-        println!("User Name: {}", user_name);
+        let _ = writeln!(out, "User Name: {}", user_name);
     }
     if let Some(client_id) = &profile.client_id {
-        println!("Client ID: {}", client_id);
+        let _ = writeln!(out, "Client ID: {}", client_id);
     }
 
     // Display token store backend (OS keyring; one entry per profile identity)
-    println!(
+    let _ = writeln!(
+        out,
         "Token Store: OS keyring (service '{}')",
         crate::profile::KEYRING_SERVICE
     );
@@ -750,9 +764,9 @@ pub fn status(profile_name: Option<String>) -> Result<(), String> {
     }
 
     if available_tokens.is_empty() {
-        println!("Tokens Available: None");
+        let _ = writeln!(out, "Tokens Available: None");
     } else {
-        println!("Tokens Available: {}", available_tokens.join(", "));
+        let _ = writeln!(out, "Tokens Available: {}", available_tokens.join(", "));
     }
 
     // Display Bot ID if bot token exists
@@ -760,7 +774,7 @@ pub fn status(profile_name: Option<String>) -> Result<(), String> {
         // Extract Bot ID from bot token if available
         if let Ok(bot_token) = token_store.get(&bot_token_key) {
             if let Some(bot_id) = extract_bot_id(&bot_token) {
-                println!("Bot ID: {}", bot_id);
+                let _ = writeln!(out, "Bot ID: {}", bot_id);
             }
         }
     }
@@ -768,21 +782,21 @@ pub fn status(profile_name: Option<String>) -> Result<(), String> {
     // Display scopes
     if let Some(bot_scopes) = profile.get_bot_scopes() {
         if !bot_scopes.is_empty() {
-            println!("Bot Scopes: {}", bot_scopes.join(", "));
+            let _ = writeln!(out, "Bot Scopes: {}", bot_scopes.join(", "));
         }
     }
     if let Some(user_scopes) = profile.get_user_scopes() {
         if !user_scopes.is_empty() {
-            println!("User Scopes: {}", user_scopes.join(", "));
+            let _ = writeln!(out, "User Scopes: {}", user_scopes.join(", "));
         }
     }
 
     // Display default token type using pure function
     let default_token_type =
         compute_default_token_type_display(profile.default_token_type, has_user_token);
-    println!("Default Token Type: {}", default_token_type);
+    let _ = writeln!(out, "Default Token Type: {}", default_token_type);
 
-    Ok(())
+    Ok(out)
 }
 
 /// Compute default token type for display in `auth status`
@@ -958,10 +972,17 @@ pub fn logout(profile_name: Option<String>) -> Result<(), String> {
         .ok_or_else(|| format!("Profile '{}' not found", profile_name))?
         .clone();
 
-    // Delete token
+    // Delete ALL credentials for this profile: bot token, user token, and
+    // the OAuth client secret. Leaving any of them behind would keep secrets
+    // in the OS keyring after the user asked to log out.
     let token_store = create_token_store().map_err(|e| e.to_string())?;
-    let token_key = make_token_key(&profile.team_id, &profile.user_id);
-    let _ = token_store.delete(&token_key); // Ignore error if token doesn't exist
+    let bot_token_key = make_token_key(&profile.team_id, &profile.user_id);
+    let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
+    let client_secret_key = crate::profile::make_oauth_client_secret_key(&profile_name);
+    // Ignore errors for entries that don't exist
+    let _ = token_store.delete(&bot_token_key);
+    let _ = token_store.delete(&user_token_key);
+    let _ = token_store.delete(&client_secret_key);
 
     // Remove profile
     config.remove(&profile_name);
@@ -1404,6 +1425,186 @@ mod tests {
         let result = logout(Some("nonexistent".to_string()));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
+    }
+
+    /// Helper: write a profiles.json with one profile and point
+    /// SLACK_RS_CONFIG_PATH at it. Returns the TempDir guard.
+    fn setup_profile_config(profile_name: &str, team_id: &str, user_id: &str) -> tempfile::TempDir {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("profiles.json");
+
+        let mut config = ProfilesConfig::new();
+        config.set(
+            profile_name.to_string(),
+            Profile {
+                team_id: team_id.to_string(),
+                user_id: user_id.to_string(),
+                team_name: Some("Test Team".to_string()),
+                user_name: None,
+                client_id: None,
+                redirect_uri: None,
+                scopes: None,
+                bot_scopes: None,
+                user_scopes: None,
+                default_token_type: None,
+            },
+        );
+        save_config(&config_path, &config).unwrap();
+        std::env::set_var("SLACK_RS_CONFIG_PATH", &config_path);
+        temp_dir
+    }
+
+    /// Logout must remove ALL credentials for the profile: bot token,
+    /// user token, and the OAuth client secret entry.
+    #[test]
+    #[serial_test::serial]
+    fn test_logout_removes_all_credentials() {
+        crate::profile::use_mock_keyring();
+        let profile_name = "logout-test";
+        let (team_id, user_id) = ("TLOGOUT", "ULOGOUT");
+        let _temp_dir = setup_profile_config(profile_name, team_id, user_id);
+
+        // Seed all three credentials into the (mock) keyring
+        let token_store = create_token_store().unwrap();
+        let bot_key = make_token_key(team_id, user_id);
+        let user_key = format!("{}:{}:user", team_id, user_id);
+        let secret_key = crate::profile::make_oauth_client_secret_key(profile_name);
+        token_store.set(&bot_key, "xoxb-logout-bot").unwrap();
+        token_store.set(&user_key, "xoxp-logout-user").unwrap();
+        token_store
+            .set(&secret_key, "logout-client-secret")
+            .unwrap();
+
+        logout(Some(profile_name.to_string())).unwrap();
+
+        // Nothing may be left behind in the token store
+        assert!(
+            !token_store.exists(&bot_key),
+            "bot token must be deleted on logout"
+        );
+        assert!(
+            !token_store.exists(&user_key),
+            "user token must be deleted on logout"
+        );
+        assert!(
+            !token_store.exists(&secret_key),
+            "OAuth client secret must be deleted on logout"
+        );
+
+        // Profile must be removed from the config
+        let config_path = default_config_path().unwrap();
+        let config = load_config(&config_path).unwrap();
+        assert!(config.get(profile_name).is_none());
+
+        std::env::remove_var("SLACK_RS_CONFIG_PATH");
+    }
+
+    /// Logout of one profile must not disturb another profile's credentials.
+    #[test]
+    #[serial_test::serial]
+    fn test_logout_leaves_other_profiles_untouched() {
+        use tempfile::TempDir;
+
+        crate::profile::use_mock_keyring();
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("profiles.json");
+
+        let mut config = ProfilesConfig::new();
+        for (name, team, user) in [("alpha", "TA1", "UA1"), ("beta", "TB2", "UB2")] {
+            config.set(
+                name.to_string(),
+                Profile {
+                    team_id: team.to_string(),
+                    user_id: user.to_string(),
+                    team_name: None,
+                    user_name: None,
+                    client_id: None,
+                    redirect_uri: None,
+                    scopes: None,
+                    bot_scopes: None,
+                    user_scopes: None,
+                    default_token_type: None,
+                },
+            );
+        }
+        save_config(&config_path, &config).unwrap();
+        std::env::set_var("SLACK_RS_CONFIG_PATH", &config_path);
+
+        let token_store = create_token_store().unwrap();
+        token_store.set("TA1:UA1", "xoxb-alpha").unwrap();
+        token_store
+            .set("oauth-client-secret:alpha", "alpha-secret")
+            .unwrap();
+        token_store.set("TB2:UB2", "xoxb-beta").unwrap();
+        token_store
+            .set("oauth-client-secret:beta", "beta-secret")
+            .unwrap();
+
+        logout(Some("alpha".to_string())).unwrap();
+
+        assert!(!token_store.exists("TA1:UA1"));
+        assert!(!token_store.exists("oauth-client-secret:alpha"));
+        // Beta's credentials survive
+        assert_eq!(token_store.get("TB2:UB2").unwrap(), "xoxb-beta");
+        assert_eq!(
+            token_store.get("oauth-client-secret:beta").unwrap(),
+            "beta-secret"
+        );
+
+        // Cleanup mock keyring state
+        token_store.delete("TB2:UB2").ok();
+        token_store.delete("oauth-client-secret:beta").ok();
+        std::env::remove_var("SLACK_RS_CONFIG_PATH");
+    }
+
+    /// `auth status` report with both tokens present.
+    #[test]
+    #[serial_test::serial]
+    fn test_status_report_with_tokens() {
+        crate::profile::use_mock_keyring();
+        let profile_name = "status-with-tokens";
+        let (team_id, user_id) = ("TSTAT1", "USTAT1");
+        let _temp_dir = setup_profile_config(profile_name, team_id, user_id);
+
+        let token_store = create_token_store().unwrap();
+        let bot_key = make_token_key(team_id, user_id);
+        let user_key = format!("{}:{}:user", team_id, user_id);
+        token_store.set(&bot_key, "xoxb-TSTAT1-B42-secret").unwrap();
+        token_store.set(&user_key, "xoxp-user").unwrap();
+
+        let report = status_report(Some(profile_name.to_string())).unwrap();
+
+        assert!(report.contains(&format!("Profile: {}", profile_name)));
+        assert!(report.contains("Team ID: TSTAT1"));
+        assert!(report.contains("Tokens Available: Bot, User"));
+        assert!(report.contains("Bot ID: B42"));
+        assert!(report.contains("Default Token Type: User"));
+        // Token values must never appear in the status output
+        assert!(!report.contains("xoxb-"));
+        assert!(!report.contains("xoxp-"));
+
+        token_store.delete(&bot_key).ok();
+        token_store.delete(&user_key).ok();
+        std::env::remove_var("SLACK_RS_CONFIG_PATH");
+    }
+
+    /// `auth status` report when no tokens are stored.
+    #[test]
+    #[serial_test::serial]
+    fn test_status_report_without_tokens() {
+        crate::profile::use_mock_keyring();
+        let profile_name = "status-no-tokens";
+        let _temp_dir = setup_profile_config(profile_name, "TSTAT2", "USTAT2");
+
+        let report = status_report(Some(profile_name.to_string())).unwrap();
+
+        assert!(report.contains("Tokens Available: None"));
+        assert!(report.contains("Default Token Type: Bot"));
+        assert!(!report.contains("Bot ID:"));
+
+        std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
     #[test]

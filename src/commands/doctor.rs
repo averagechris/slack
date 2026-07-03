@@ -47,53 +47,41 @@ pub struct TokenStatus {
     pub user_token_exists: bool,
 }
 
-/// Run doctor diagnostics
+/// Collect diagnostic information for a profile.
 ///
-/// # Arguments
-/// * `profile_name` - Optional profile name (defaults to "default")
-/// * `json_output` - Whether to output JSON format
-pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), String> {
-    let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
-
+/// Separated from [`doctor`] so tests can assert the diagnostic contents
+/// (token existence flags, hints, ...) without capturing stdout.
+///
+/// Returns `Ok` with empty token status and a hint when no profiles are
+/// configured; returns `Err` when the profile does not exist.
+pub fn collect_diagnostics(profile_name: &str) -> Result<DiagnosticInfo, String> {
     // Get config path
     let config_path =
         default_config_path().map_err(|e| format!("Failed to get config path: {}", e))?;
 
     // Check if config exists
     if !config_path.exists() {
-        if json_output {
-            let info = DiagnosticInfo {
-                config_path: config_path.display().to_string(),
-                token_store: TokenStoreInfo {
-                    backend: "keyring".to_string(),
-                    location: token_store_location(),
-                },
-                tokens: TokenStatus {
-                    bot_token_exists: false,
-                    user_token_exists: false,
-                },
-                scope_hints: vec![
-                    "No profiles configured. Run 'auth login' to authenticate.".to_string()
-                ],
-            };
-            println!("{}", serde_json::to_string_pretty(&info).unwrap());
-        } else {
-            println!("Doctor Diagnostics");
-            println!("==================");
-            println!();
-            println!("Config Path: {}", config_path.display());
-            println!("Status: No profiles configured");
-            println!();
-            println!("Hint: Run 'auth login' to authenticate.");
-        }
-        return Ok(());
+        return Ok(DiagnosticInfo {
+            config_path: config_path.display().to_string(),
+            token_store: TokenStoreInfo {
+                backend: "keyring".to_string(),
+                location: token_store_location(),
+            },
+            tokens: TokenStatus {
+                bot_token_exists: false,
+                user_token_exists: false,
+            },
+            scope_hints: vec![
+                "No profiles configured. Run 'auth login' to authenticate.".to_string()
+            ],
+        });
     }
 
     // Load config
     let config = load_config(&config_path).map_err(|e| format!("Failed to load config: {}", e))?;
 
     // Get profile
-    let profile = config.get(&profile_name).ok_or_else(|| {
+    let profile = config.get(profile_name).ok_or_else(|| {
         format!(
             "Profile '{}' not found. Available profiles: {:?}",
             profile_name,
@@ -106,7 +94,7 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
         create_token_store().map_err(|e| format!("Failed to create token store: {}", e))?;
 
     let bot_key = make_token_key(&profile.team_id, &profile.user_id);
-    let user_key = format!("{}_user", bot_key);
+    let user_key = format!("{}:user", bot_key);
 
     let bot_token_exists = token_store.exists(&bot_key);
     let user_token_exists = token_store.exists(&user_key);
@@ -120,35 +108,47 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
         }
     }
 
+    Ok(DiagnosticInfo {
+        config_path: config_path.display().to_string(),
+        token_store: TokenStoreInfo {
+            backend: "keyring".to_string(),
+            location: token_store_location(),
+        },
+        tokens: TokenStatus {
+            bot_token_exists,
+            user_token_exists,
+        },
+        scope_hints,
+    })
+}
+
+/// Run doctor diagnostics
+///
+/// # Arguments
+/// * `profile_name` - Optional profile name (defaults to "default")
+/// * `json_output` - Whether to output JSON format
+pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), String> {
+    let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
+
+    let info = collect_diagnostics(&profile_name)?;
+
     if json_output {
-        let info = DiagnosticInfo {
-            config_path: config_path.display().to_string(),
-            token_store: TokenStoreInfo {
-                backend: "keyring".to_string(),
-                location: token_store_location(),
-            },
-            tokens: TokenStatus {
-                bot_token_exists,
-                user_token_exists,
-            },
-            scope_hints,
-        };
         println!("{}", serde_json::to_string_pretty(&info).unwrap());
     } else {
         println!("Doctor Diagnostics");
         println!("==================");
         println!();
         println!("Profile: {}", profile_name);
-        println!("Config Path: {}", config_path.display());
+        println!("Config Path: {}", info.config_path);
         println!();
         println!("Token Store:");
-        println!("  Backend: keyring");
-        println!("  Location: {}", token_store_location());
+        println!("  Backend: {}", info.token_store.backend);
+        println!("  Location: {}", info.token_store.location);
         println!();
         println!("Token Status:");
         println!(
             "  Bot Token: {}",
-            if bot_token_exists {
+            if info.tokens.bot_token_exists {
                 "✓ exists"
             } else {
                 "✗ not found"
@@ -156,17 +156,17 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
         );
         println!(
             "  User Token: {}",
-            if user_token_exists {
+            if info.tokens.user_token_exists {
                 "✓ exists"
             } else {
                 "✗ not found"
             }
         );
 
-        if !scope_hints.is_empty() {
+        if !info.scope_hints.is_empty() {
             println!();
             println!("Hints:");
-            for hint in scope_hints {
+            for hint in &info.scope_hints {
                 println!("  • {}", hint);
             }
         }

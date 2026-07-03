@@ -360,6 +360,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_callback_server_happy_path() {
+        let port = free_port().await;
+        let expected_state = "happy_state".to_string();
+
+        let server = tokio::spawn(run_callback_server(port, expected_state, 10));
+
+        // Give the server a moment to bind
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Single correct callback: success page served, code returned
+        let response = send_request(port, "/callback?code=auth_code_123&state=happy_state").await;
+        assert!(response.contains("200 OK"), "got: {}", response);
+        assert!(response.contains("Authentication Successful"));
+
+        let result = server.await.unwrap().unwrap();
+        assert_eq!(result.code, "auth_code_123");
+        assert_eq!(result.state, "happy_state");
+    }
+
+    #[tokio::test]
+    async fn test_callback_server_decodes_percent_encoded_code() {
+        let port = free_port().await;
+        let expected_state = "enc_state".to_string();
+
+        let server = tokio::spawn(run_callback_server(port, expected_state, 10));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Percent-encoded code must be decoded before being returned
+        let response = send_request(port, "/callback?code=abc%2Fdef&state=enc_state").await;
+        assert!(response.contains("200 OK"), "got: {}", response);
+
+        let result = server.await.unwrap().unwrap();
+        assert_eq!(result.code, "abc/def");
+    }
+
+    #[tokio::test]
+    async fn test_callback_server_oauth_error_param_terminates_flow() {
+        let port = free_port().await;
+        let expected_state = "err_state".to_string();
+
+        let server = tokio::spawn(run_callback_server(port, expected_state, 10));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Slack redirecting with ?error= (e.g. user denied) ends the flow
+        let response = send_request(port, "/callback?error=access_denied").await;
+        assert!(response.contains("400 Bad Request"), "got: {}", response);
+        assert!(response.contains("access_denied"));
+
+        let result = server.await.unwrap();
+        match result {
+            Err(OAuthError::SlackError(msg)) => assert_eq!(msg, "access_denied"),
+            other => panic!("Expected SlackError(access_denied), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
     async fn test_missing_params_then_correct_state_succeeds() {
         let port = free_port().await;
         let expected_state = "state123".to_string();

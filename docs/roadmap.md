@@ -102,7 +102,7 @@ recorded in AGENTS.md.
 
 ### Reliability & coverage
 - [x] Q7: 429 retry/backoff in `call_method` (wrapper commands)
-- [ ] Coverage pass: OAuth callback server happy path, handler/dispatch paths,
+- [x] Coverage pass: OAuth callback server happy path, handler/dispatch paths,
       login orchestration; shore up gaps opened by keyring/env-auth removal
 
 ### Release pipeline

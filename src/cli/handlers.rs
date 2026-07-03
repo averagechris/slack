@@ -769,6 +769,67 @@ mod tests {
     }
 
     #[test]
+    fn test_login_args_from_cli_all_preset_expands_scopes() {
+        // 'all' presets must expand to the full scope lists, with the
+        // right bot/user context for each side.
+        let parsed = LoginArgs::from_cli(&login_cli(None, None, Some("all"), Some("all"), None));
+
+        let bot_scopes = parsed.bot_scopes.unwrap();
+        assert_eq!(bot_scopes, oauth::bot_all_scopes());
+        assert!(!bot_scopes.contains(&"all".to_string()));
+
+        let user_scopes = parsed.user_scopes.unwrap();
+        assert_eq!(user_scopes, oauth::user_all_scopes());
+        assert!(!user_scopes.contains(&"all".to_string()));
+
+        // Bot and user presets differ (context-sensitive expansion)
+        assert_ne!(bot_scopes, user_scopes);
+    }
+
+    /// Manifest-first tunnel login requires interactivity: branch selection
+    /// must reject --cloudflared in non-interactive mode before any network
+    /// or tunnel activity.
+    #[tokio::test]
+    async fn test_run_auth_login_cloudflared_rejects_non_interactive() {
+        let cli = login_cli(None, None, None, None, Some("cloudflared"));
+        let result = run_auth_login(&cli, true).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("requires interactive mode"), "got: {}", msg);
+    }
+
+    /// Standard login in non-interactive mode must fail fast with a
+    /// comprehensive list of missing OAuth parameters (no prompts, no
+    /// network) when nothing is provided or saved.
+    #[tokio::test]
+    #[serial]
+    async fn test_run_auth_login_non_interactive_reports_missing_params() {
+        // Point config at an empty temp location so no saved profile leaks in
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        std::env::set_var(
+            "SLACK_RS_CONFIG_PATH",
+            temp_dir.path().join("profiles.json"),
+        );
+        crate::profile::use_mock_keyring();
+
+        let cli = login_cli(Some("fresh-profile"), None, None, None, None);
+        let result = run_auth_login(&cli, true).await;
+
+        std::env::remove_var("SLACK_RS_CONFIG_PATH");
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Missing required OAuth parameters"),
+            "got: {}",
+            msg
+        );
+        assert!(msg.contains("--client-id"));
+        assert!(msg.contains("--bot-scopes"));
+        assert!(msg.contains("--user-scopes"));
+    }
+
+    #[test]
     fn test_should_show_private_channel_guidance_empty_response() {
         let mut params = HashMap::new();
         params.insert("types".to_string(), "private_channel".to_string());

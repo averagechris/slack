@@ -44,6 +44,11 @@ the fork will be v0.2.0.
 
 ### Fixed
 
+- `auth logout` now removes ALL credentials for the profile from the OS
+  keyring — bot token, user token, and the OAuth client secret entry —
+  instead of only the bot token.
+- `doctor` now checks the correct user-token key (`{team}:{user}:user`);
+  previously it always reported the user token as missing.
 - 429 rate-limit retry with exponential backoff now applies to wrapper
   commands via `call_method` (Q7).
 
