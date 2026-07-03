@@ -60,12 +60,13 @@ before landing any change.
 
 ```
 src/
-├── main.rs           # CLI entry point and command routing (hand-rolled parsing; clap migration planned)
+├── main.rs           # CLI entry point (clap-based parsing and dispatch)
 ├── lib.rs            # Library root with module exports (lib name: slack)
 ├── api/              # Slack API client, call args/envelope/guidance
 ├── auth/             # Auth commands (login, logout, status, export/import),
 │                     #   cloudflared tunnel, manifest generation, crypto, i18n
-├── cli/              # CLI helpers, handlers, help text, introspection registry
+├── cli/              # clap arg definitions (args.rs), handlers, introspection
+│                     #   derived from the clap model (introspect.rs)
 ├── commands/         # Wrapper commands (msg, react, conv, thread, users, file,
 │                     #   search, doctor, config, write guards)
 ├── debug.rs          # Debug logging with token redaction
@@ -105,7 +106,7 @@ docs/                 # roadmap.md (tracker), fork-audit.md (read-only), guides
 | Reintroduce the `--client-secret` raw CLI flag | Removed per audit S6 — secrets land in shell history/process lists. Secrets come only from env var (`SLACKRS_CLIENT_SECRET` / `--client-secret-env`), file (`--client-secret-file`), or interactive prompt. |
 | Reintroduce ngrok tunnel support or the `demo` command | Dropped per D4 as dead code. Cloudflared tunnel login stays. |
 | Edit `~/.agents/skills/` or other distributed skill copies | Source of truth is `./skills/` in this repo. Edit `./skills/<name>/SKILL.md` and let installs propagate. |
-| Manually extend `src/cli/introspection.rs` beyond keeping it accurate | It is a hand-mirrored registry, guaranteed to drift; it gets deleted in the clap migration (D3). Keep changes minimal. |
+| Hand-roll new argument parsing instead of extending the clap definitions in `src/cli/args.rs` | The CLI is clap-based (D3); introspection (`commands --json`, `schema`, `--help --json`) is derived from the clap model in `src/cli/introspect.rs` and must stay derived, never hand-mirrored. |
 | Edit `docs/fork-audit.md` | Historical record of the fork audit. |
 
 ## Code Style Guidelines

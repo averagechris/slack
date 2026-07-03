@@ -11,7 +11,7 @@ use crate::profile::{
     create_token_store, default_config_path, make_token_key, resolve_profile_full, TokenType,
 };
 
-/// Parsed login arguments structure
+/// Login arguments after scope expansion and tunnel-mode resolution
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoginArgs {
     pub profile_name: Option<String>,
@@ -40,103 +40,44 @@ impl TunnelMode {
     }
 }
 
-/// Parse login command arguments
-///
-/// This function extracts and validates arguments for the `auth login` command.
-///
-/// # Arguments
-/// * `args` - Raw command line arguments after "auth login"
-///
-/// # Returns
-/// * `Ok(LoginArgs)` - Successfully parsed and validated arguments
-/// * `Err(String)` - Parse error with descriptive message
-///
-/// # Validation Rules
-/// 1. Unknown options are rejected
-/// 2. Scope inputs are normalized (comma-separated, whitespace-trimmed)
-pub fn parse_login_args(args: &[String]) -> Result<LoginArgs, String> {
-    let mut profile_name: Option<String> = None;
-    let mut client_id: Option<String> = None;
-    let mut cloudflared_path: Option<String> = None;
-    let mut bot_scopes: Option<Vec<String>> = None;
-    let mut user_scopes: Option<Vec<String>> = None;
+impl LoginArgs {
+    /// Build LoginArgs from clap-parsed CLI arguments.
+    ///
+    /// Scope inputs are normalized (comma-separated, whitespace-trimmed) and
+    /// 'all' presets are expanded with the appropriate bot/user context.
+    pub fn from_cli(cli: &crate::cli::args::LoginCliArgs) -> Self {
+        let bot_scopes = cli.bot_scopes.as_ref().map(|s| {
+            let scopes_input: Vec<String> = s.split(',').map(|s| s.trim().to_string()).collect();
+            // Expand 'all' presets with bot context (true)
+            oauth::expand_scopes_with_context(&scopes_input, true)
+        });
+        let user_scopes = cli.user_scopes.as_ref().map(|s| {
+            let scopes_input: Vec<String> = s.split(',').map(|s| s.trim().to_string()).collect();
+            // Expand 'all' presets with user context (false)
+            oauth::expand_scopes_with_context(&scopes_input, false)
+        });
 
-    let mut i = 0;
-    while i < args.len() {
-        if args[i].starts_with("--") {
-            match args[i].as_str() {
-                "--client-id" => {
-                    i += 1;
-                    if i < args.len() {
-                        client_id = Some(args[i].clone());
-                    } else {
-                        return Err("--client-id requires a value".to_string());
-                    }
-                }
-                "--cloudflared" => {
-                    // Check if next arg is a value (not starting with --) or end of args
-                    if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                        i += 1;
-                        cloudflared_path = Some(args[i].clone());
-                    } else {
-                        // Use default "cloudflared" (PATH resolution)
-                        cloudflared_path = Some("cloudflared".to_string());
-                    }
-                }
-                "--bot-scopes" => {
-                    i += 1;
-                    if i < args.len() {
-                        let scopes_input: Vec<String> =
-                            args[i].split(',').map(|s| s.trim().to_string()).collect();
-                        // Expand 'all' presets with bot context (true)
-                        bot_scopes = Some(oauth::expand_scopes_with_context(&scopes_input, true));
-                    } else {
-                        return Err("--bot-scopes requires a value".to_string());
-                    }
-                }
-                "--user-scopes" => {
-                    i += 1;
-                    if i < args.len() {
-                        let scopes_input: Vec<String> =
-                            args[i].split(',').map(|s| s.trim().to_string()).collect();
-                        // Expand 'all' presets with user context (false)
-                        user_scopes = Some(oauth::expand_scopes_with_context(&scopes_input, false));
-                    } else {
-                        return Err("--user-scopes requires a value".to_string());
-                    }
-                }
-                _ => {
-                    return Err(format!("Unknown option: {}", args[i]));
-                }
-            }
-        } else if profile_name.is_none() {
-            profile_name = Some(args[i].clone());
-        } else {
-            return Err(format!("Unexpected argument: {}", args[i]));
+        let tunnel_mode = match &cli.cloudflared {
+            Some(path) => TunnelMode::Cloudflared(Some(path.clone())),
+            None => TunnelMode::None,
+        };
+
+        Self {
+            profile_name: cli.profile_name.clone(),
+            client_id: cli.client_id.clone(),
+            bot_scopes,
+            user_scopes,
+            tunnel_mode,
         }
-        i += 1;
     }
-
-    // Determine tunnel mode
-    let tunnel_mode = if let Some(path) = cloudflared_path {
-        TunnelMode::Cloudflared(Some(path))
-    } else {
-        TunnelMode::None
-    };
-
-    Ok(LoginArgs {
-        profile_name,
-        client_id,
-        bot_scopes,
-        user_scopes,
-        tunnel_mode,
-    })
 }
 
-/// Run the auth login command with argument parsing
-pub async fn run_auth_login(args: &[String], non_interactive: bool) -> Result<(), String> {
-    // Parse arguments
-    let parsed_args = parse_login_args(args)?;
+/// Run the auth login command
+pub async fn run_auth_login(
+    cli_args: &crate::cli::args::LoginCliArgs,
+    non_interactive: bool,
+) -> Result<(), String> {
+    let parsed_args = LoginArgs::from_cli(cli_args);
 
     // Use default redirect_uri
     let redirect_uri = "http://127.0.0.1:8765/callback".to_string();
@@ -440,61 +381,14 @@ pub async fn run_api_call(args: Vec<String>) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// Common arguments shared between export and import commands
-struct ExportImportArgs {
+/// Common passphrase/i18n options shared between export and import commands
+struct ExportImportCommon {
     passphrase_env: Option<String>,
     yes: bool,
     lang: Option<String>,
 }
 
-impl ExportImportArgs {
-    /// Parse common arguments from command line args
-    /// Returns (ExportImportArgs, remaining_unparsed_args)
-    fn parse(args: &[String]) -> (Self, Vec<(usize, String)>) {
-        let mut passphrase_env: Option<String> = None;
-        let mut yes = false;
-        let mut lang: Option<String> = None;
-        let mut remaining = Vec::new();
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--passphrase-env" => {
-                    i += 1;
-                    if i < args.len() {
-                        passphrase_env = Some(args[i].clone());
-                    }
-                }
-                "--passphrase-prompt" => {
-                    // Ignore this flag - we always prompt if --passphrase-env is not set
-                }
-                "--yes" => {
-                    yes = true;
-                }
-                "--lang" => {
-                    i += 1;
-                    if i < args.len() {
-                        lang = Some(args[i].clone());
-                    }
-                }
-                _ => {
-                    // Not a common argument, save for specific parsing
-                    remaining.push((i, args[i].clone()));
-                }
-            }
-            i += 1;
-        }
-
-        (
-            Self {
-                passphrase_env,
-                yes,
-                lang,
-            },
-            remaining,
-        )
-    }
-
+impl ExportImportCommon {
     /// Get Messages based on language setting
     fn get_messages(&self) -> auth::Messages {
         if let Some(ref lang_code) = self.lang {
@@ -532,62 +426,26 @@ impl ExportImportArgs {
 }
 
 /// Handle auth export command
-pub async fn handle_export_command(args: &[String]) {
-    // Check for help flags first
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        super::help::print_export_help();
-        return;
-    }
+pub async fn handle_export_command(
+    args: &crate::cli::args::ExportCliArgs,
+    profile: Option<String>,
+) {
+    let common = ExportImportCommon {
+        passphrase_env: args.passphrase_env.clone(),
+        yes: args.yes,
+        lang: args.lang.clone(),
+    };
 
-    // Parse common arguments
-    let (common_args, remaining) = ExportImportArgs::parse(args);
-
-    // Parse export-specific arguments
-    let mut profile_name: Option<String> = None;
-    let mut all = false;
-    let mut output_path: Option<String> = None;
-
-    for (idx, arg) in remaining {
-        match arg.as_str() {
-            "--profile" => {
-                // Next arg should be the profile name
-                if idx + 1 < args.len() {
-                    profile_name = Some(args[idx + 1].clone());
-                }
-            }
-            "--all" => {
-                all = true;
-            }
-            "--out" => {
-                // Next arg should be the output path
-                if idx + 1 < args.len() {
-                    output_path = Some(args[idx + 1].clone());
-                }
-            }
-            _ => {
-                // Check if this is a value for a previous flag
-                if idx > 0 {
-                    let prev = &args[idx - 1];
-                    if prev == "--profile"
-                        || prev == "--out"
-                        || prev == "--passphrase-env"
-                        || prev == "--lang"
-                    {
-                        // This is a value, not an unknown option
-                        continue;
-                    }
-                }
-                eprintln!("Unknown option: {}", arg);
-                std::process::exit(1);
-            }
-        }
-    }
+    // Which profile to export: --profile flag (global) only; --all overrides
+    let profile_name = profile;
+    let all = args.all;
+    let output_path = args.out.clone();
 
     // Get i18n messages
-    let messages = common_args.get_messages();
+    let messages = common.get_messages();
 
     // Show warning and validate --yes
-    if !common_args.yes {
+    if !common.yes {
         eprintln!("{}", messages.get("warn.export_sensitive"));
         eprintln!("Error: --yes flag is required to confirm this dangerous operation");
         std::process::exit(1);
@@ -603,7 +461,7 @@ pub async fn handle_export_command(args: &[String]) {
     };
 
     // Get passphrase
-    let passphrase = match common_args.get_passphrase(&messages) {
+    let passphrase = match common.get_passphrase(&messages) {
         Ok(pass) => pass,
         Err(e) => {
             eprintln!("{}", e);
@@ -616,7 +474,7 @@ pub async fn handle_export_command(args: &[String]) {
         all,
         output_path: output,
         passphrase,
-        yes: common_args.yes,
+        yes: common.yes,
     };
 
     let token_store = create_token_store().expect("Failed to create token store");
@@ -648,56 +506,20 @@ pub async fn handle_export_command(args: &[String]) {
 }
 
 /// Handle auth import command
-pub async fn handle_import_command(args: &[String]) {
-    // Check for help flags first
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        super::help::print_import_help();
-        return;
-    }
+pub async fn handle_import_command(args: &crate::cli::args::ImportCliArgs) {
+    let common = ExportImportCommon {
+        passphrase_env: args.passphrase_env.clone(),
+        yes: args.yes,
+        lang: args.lang.clone(),
+    };
 
-    // Parse common arguments
-    let (common_args, remaining) = ExportImportArgs::parse(args);
-
-    // Parse import-specific arguments
-    let mut input_path: Option<String> = None;
-    let mut force = false;
-    let mut dry_run = false;
-    let mut json = false;
-
-    for (idx, arg) in remaining {
-        match arg.as_str() {
-            "--in" => {
-                // Next arg should be the input path
-                if idx + 1 < args.len() {
-                    input_path = Some(args[idx + 1].clone());
-                }
-            }
-            "--force" => {
-                force = true;
-            }
-            "--dry-run" => {
-                dry_run = true;
-            }
-            "--json" => {
-                json = true;
-            }
-            _ => {
-                // Check if this is a value for a previous flag
-                if idx > 0 {
-                    let prev = &args[idx - 1];
-                    if prev == "--in" || prev == "--passphrase-env" || prev == "--lang" {
-                        // This is a value, not an unknown option
-                        continue;
-                    }
-                }
-                eprintln!("Unknown option: {}", arg);
-                std::process::exit(1);
-            }
-        }
-    }
+    let input_path = args.input.clone();
+    let force = args.force;
+    let dry_run = args.dry_run;
+    let json = args.json;
 
     // Get i18n messages
-    let messages = common_args.get_messages();
+    let messages = common.get_messages();
 
     // Validate required options
     let input = match input_path {
@@ -709,7 +531,7 @@ pub async fn handle_import_command(args: &[String]) {
     };
 
     // Get passphrase
-    let passphrase = match common_args.get_passphrase(&messages) {
+    let passphrase = match common.get_passphrase(&messages) {
         Ok(pass) => pass,
         Err(e) => {
             eprintln!("{}", e);
@@ -720,7 +542,7 @@ pub async fn handle_import_command(args: &[String]) {
     let options = auth::ImportOptions {
         input_path: input,
         passphrase,
-        yes: common_args.yes,
+        yes: common.yes,
         force,
         dry_run,
         json,
@@ -784,17 +606,13 @@ pub async fn handle_import_command(args: &[String]) {
 /// # Returns
 /// * `Ok(())` - Success (JSON output to stdout)
 /// * `Err(String)` - Error (error message to stderr, non-zero exit)
-pub fn run_install_skill(args: &[String]) -> Result<(), String> {
+pub fn run_install_skill(args: &crate::cli::args::InstallSkillsArgs) -> Result<(), String> {
     use crate::skills;
     use serde_json::json;
 
-    let global = args.iter().any(|arg| arg == "--global");
-    let json_output = crate::cli::has_flag(args, "--json");
-
-    let source = args
-        .iter()
-        .find(|arg| !arg.starts_with("--"))
-        .map(|s| s.as_str());
+    let global = args.global;
+    let json_output = args.json;
+    let source = args.source.as_deref();
 
     let installed = skills::install_skill(source, global).map_err(|e| e.to_string())?;
 
@@ -830,12 +648,25 @@ mod tests {
     use serial_test::serial;
     use std::collections::HashMap;
 
+    fn login_cli(
+        profile_name: Option<&str>,
+        client_id: Option<&str>,
+        bot_scopes: Option<&str>,
+        user_scopes: Option<&str>,
+        cloudflared: Option<&str>,
+    ) -> crate::cli::args::LoginCliArgs {
+        crate::cli::args::LoginCliArgs {
+            profile_name: profile_name.map(String::from),
+            client_id: client_id.map(String::from),
+            bot_scopes: bot_scopes.map(String::from),
+            user_scopes: user_scopes.map(String::from),
+            cloudflared: cloudflared.map(String::from),
+        }
+    }
+
     #[test]
-    fn test_parse_login_args_empty() {
-        let args = vec![];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
+    fn test_login_args_from_cli_empty() {
+        let parsed = LoginArgs::from_cli(&login_cli(None, None, None, None, None));
         assert_eq!(parsed.profile_name, None);
         assert_eq!(parsed.client_id, None);
         assert_eq!(parsed.bot_scopes, None);
@@ -844,144 +675,83 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_login_args_profile_only() {
-        let args = vec!["my-profile".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
+    fn test_login_args_from_cli_profile_and_client_id() {
+        let parsed = LoginArgs::from_cli(&login_cli(
+            Some("my-profile"),
+            Some("123.456"),
+            None,
+            None,
+            None,
+        ));
         assert_eq!(parsed.profile_name, Some("my-profile".to_string()));
+        assert_eq!(parsed.client_id, Some("123.456".to_string()));
         assert_eq!(parsed.tunnel_mode, TunnelMode::None);
     }
 
     #[test]
-    fn test_parse_login_args_with_client_id() {
-        let args = vec!["--client-id".to_string(), "123.456".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert_eq!(parsed.client_id, Some("123.456".to_string()));
-    }
-
-    #[test]
-    fn test_parse_login_args_cloudflared_default() {
-        let args = vec!["--cloudflared".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert!(matches!(
+    fn test_login_args_from_cli_cloudflared() {
+        // Default missing value ("cloudflared") is applied by clap; from_cli
+        // sees the resolved path either way.
+        let parsed = LoginArgs::from_cli(&login_cli(None, None, None, None, Some("cloudflared")));
+        assert_eq!(
             parsed.tunnel_mode,
-            TunnelMode::Cloudflared(Some(_))
+            TunnelMode::Cloudflared(Some("cloudflared".to_string()))
+        );
+
+        let parsed = LoginArgs::from_cli(&login_cli(
+            None,
+            None,
+            None,
+            None,
+            Some("/usr/bin/cloudflared"),
         ));
-        if let TunnelMode::Cloudflared(Some(path)) = parsed.tunnel_mode {
-            assert_eq!(path, "cloudflared");
-        }
+        assert_eq!(
+            parsed.tunnel_mode,
+            TunnelMode::Cloudflared(Some("/usr/bin/cloudflared".to_string()))
+        );
+        assert!(parsed.tunnel_mode.is_cloudflared());
     }
 
     #[test]
-    fn test_parse_login_args_cloudflared_with_path() {
-        let args = vec![
-            "--cloudflared".to_string(),
-            "/usr/bin/cloudflared".to_string(),
-        ];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        if let TunnelMode::Cloudflared(Some(path)) = parsed.tunnel_mode {
-            assert_eq!(path, "/usr/bin/cloudflared");
-        } else {
-            panic!("Expected Cloudflared tunnel mode");
-        }
-    }
-
-    #[test]
-    fn test_parse_login_args_ngrok_removed() {
-        let args = vec!["--ngrok".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown option"));
-    }
-
-    #[test]
-    fn test_parse_login_args_bot_scopes() {
-        let args = vec![
-            "--bot-scopes".to_string(),
-            "chat:write,users:read".to_string(),
-        ];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert!(parsed.bot_scopes.is_some());
+    fn test_login_args_from_cli_bot_scopes_normalized() {
+        let parsed = LoginArgs::from_cli(&login_cli(
+            None,
+            None,
+            Some("chat:write, users:read"),
+            None,
+            None,
+        ));
         let scopes = parsed.bot_scopes.unwrap();
         assert!(scopes.contains(&"chat:write".to_string()));
         assert!(scopes.contains(&"users:read".to_string()));
     }
 
     #[test]
-    fn test_parse_login_args_user_scopes() {
-        let args = vec![
-            "--user-scopes".to_string(),
-            "search:read,users:read".to_string(),
-        ];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
+    fn test_login_args_from_cli_user_scopes() {
+        let parsed = LoginArgs::from_cli(&login_cli(
+            None,
+            None,
+            None,
+            Some("search:read,users:read"),
+            None,
+        ));
         assert!(parsed.user_scopes.is_some());
     }
 
     #[test]
-    fn test_parse_login_args_all_parameters() {
-        let args = vec![
-            "work".to_string(),
-            "--client-id".to_string(),
-            "123.456".to_string(),
-            "--bot-scopes".to_string(),
-            "chat:write".to_string(),
-            "--user-scopes".to_string(),
-            "users:read".to_string(),
-            "--cloudflared".to_string(),
-        ];
-        let result = parse_login_args(&args);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
+    fn test_login_args_from_cli_all_parameters() {
+        let parsed = LoginArgs::from_cli(&login_cli(
+            Some("work"),
+            Some("123.456"),
+            Some("chat:write"),
+            Some("users:read"),
+            Some("cloudflared"),
+        ));
         assert_eq!(parsed.profile_name, Some("work".to_string()));
         assert_eq!(parsed.client_id, Some("123.456".to_string()));
         assert!(parsed.bot_scopes.is_some());
         assert!(parsed.user_scopes.is_some());
         assert!(parsed.tunnel_mode.is_cloudflared());
-    }
-
-    #[test]
-    fn test_parse_login_args_unknown_option() {
-        let args = vec!["--unknown-flag".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown option"));
-    }
-
-    #[test]
-    fn test_parse_login_args_unexpected_positional() {
-        let args = vec!["profile1".to_string(), "profile2".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unexpected argument"));
-    }
-
-    #[test]
-    fn test_parse_login_args_client_id_missing_value() {
-        let args = vec!["--client-id".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--client-id requires a value"));
-    }
-
-    #[test]
-    fn test_parse_login_args_bot_scopes_missing_value() {
-        let args = vec!["--bot-scopes".to_string()];
-        let result = parse_login_args(&args);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("--bot-scopes requires a value"));
     }
 
     #[test]

@@ -1,15 +1,16 @@
 //! CLI command routing and handlers
 
+pub mod args;
 mod context;
 mod handlers;
-mod help;
-pub mod introspection;
+pub mod introspect;
 
+pub use args::Cli;
 pub use context::CliContext;
 pub use handlers::{
     handle_export_command, handle_import_command, run_api_call, run_auth_login, run_install_skill,
 };
-pub use introspection::{
+pub use introspect::{
     generate_commands_list, generate_help, generate_schema, CommandDef, CommandsListResponse,
     HelpResponse, SchemaResponse,
 };
@@ -23,6 +24,27 @@ use crate::profile::{
     TokenStore, TokenType,
 };
 use serde_json::Value;
+
+/// Resolved global CLI options shared by all commands.
+#[derive(Debug, Clone)]
+pub struct GlobalArgs {
+    /// Raw `--profile` flag value (before env/default fallback)
+    pub profile: Option<String>,
+    /// Non-interactive mode (explicit flag or auto-detected non-TTY stdin)
+    pub non_interactive: bool,
+    /// Debug level resolved from --debug/--trace/SLACK_RS_DEBUG
+    pub debug_level: debug::DebugLevel,
+}
+
+impl GlobalArgs {
+    /// Resolve profile name: `--profile` flag > `SLACK_PROFILE` env > "default"
+    pub fn profile_name(&self) -> String {
+        self.profile
+            .clone()
+            .or_else(|| std::env::var("SLACK_PROFILE").ok())
+            .unwrap_or_else(|| "default".to_string())
+    }
+}
 
 /// Resolve token from the token store
 ///
@@ -151,22 +173,16 @@ pub fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|arg| arg == flag)
 }
 
-/// Determine if output should be raw based on SLACKRS_OUTPUT environment variable and --raw flag
-///
-/// # Arguments
-/// * `args` - Command line arguments
-///
-/// # Returns
-/// * `true` if output should be raw (without envelope)
-/// * `false` if output should include envelope
+/// Determine if output should be raw based on the --raw flag and the
+/// SLACKRS_OUTPUT environment variable.
 ///
 /// # Priority
 /// 1. --raw flag (highest priority)
 /// 2. SLACKRS_OUTPUT environment variable ("raw" or "envelope")
 /// 3. Default to envelope (false)
-pub fn should_output_raw(args: &[String]) -> bool {
+pub fn should_output_raw(raw_flag: bool) -> bool {
     // Priority 1: --raw flag always wins
-    if has_flag(args, "--raw") {
+    if raw_flag {
         return true;
     }
 
@@ -247,20 +263,9 @@ pub async fn wrap_with_envelope_and_token_type(
 
 /// Resolve profile name with priority: --profile flag > SLACK_PROFILE env > "default"
 ///
-/// This function implements the unified profile selection logic across all CLI commands.
-/// It searches for `--profile` in any position within the args array, supporting both
-/// `--profile=name` and `--profile name` formats.
-///
-/// # Arguments
-/// * `args` - Command line arguments (including subcommands and flags)
-///
-/// # Returns
-/// Profile name resolved according to priority rules
-///
-/// # Priority
-/// 1. `--profile` flag from command line (either format)
-/// 2. `SLACK_PROFILE` environment variable
-/// 3. "default" as fallback
+/// This helper works on a raw argv slice and is used by the free-form
+/// `api call` argument list, where `--profile` may appear among trailing
+/// key=value parameters. Typed commands use [`GlobalArgs::profile_name`].
 pub fn resolve_profile_name(args: &[String]) -> String {
     // Priority 1: Check for --profile flag in args
     if let Some(profile) = get_option(args, "--profile=") {
@@ -319,70 +324,6 @@ pub fn get_option(args: &[String], prefix: &str) -> Option<String> {
     None
 }
 
-/// Parse token type from command line arguments
-/// Supports both --token-type=VALUE and --token-type VALUE formats
-pub fn parse_token_type(args: &[String]) -> Result<Option<TokenType>, String> {
-    // First try --token-type=VALUE format
-    if let Some(token_type_str) = get_option(args, "--token-type=") {
-        return token_type_str
-            .parse::<TokenType>()
-            .map(Some)
-            .map_err(|e| e.to_string());
-    }
-
-    // Then try --token-type VALUE format (space-separated)
-    if let Some(pos) = args.iter().position(|arg| arg == "--token-type") {
-        if let Some(value) = args.get(pos + 1) {
-            return value
-                .parse::<TokenType>()
-                .map(Some)
-                .map_err(|e| e.to_string());
-        } else {
-            return Err("--token-type requires a value (bot or user)".to_string());
-        }
-    }
-
-    Ok(None)
-}
-
-pub async fn run_search(args: &[String]) -> Result<(), String> {
-    let query = args[2].clone();
-    let count = get_option(args, "--count=").and_then(|s| s.parse().ok());
-    let page = get_option(args, "--page=").and_then(|s| s.parse().ok());
-    let sort = get_option(args, "--sort=");
-    let sort_dir = get_option(args, "--sort_dir=");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
-
-    let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let response = commands::search(&client, query, count, page, sort, sort_dir)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Display error guidance if response contains a known error
-    crate::api::display_wrapper_error_guidance(&response);
-
-    // Output with or without envelope
-    let output = if raw {
-        serde_json::to_string_pretty(&response).unwrap()
-    } else {
-        let response_value = serde_json::to_value(&response).map_err(|e| e.to_string())?;
-        let wrapped = wrap_with_envelope_and_token_type(
-            response_value,
-            "search.messages",
-            "search",
-            Some(profile_name),
-            token_type,
-        )
-        .await?;
-        serde_json::to_string_pretty(&wrapped).unwrap()
-    };
-
-    println!("{}", output);
-    Ok(())
-}
-
 /// Get all options with a specific prefix from args
 /// Supports both --key=value and --key value formats (can be mixed)
 /// When using space-separated format, value must not start with '-'
@@ -417,45 +358,101 @@ pub fn get_all_options(args: &[String], prefix: &str) -> Vec<String> {
     results
 }
 
-pub async fn run_conv_list(args: &[String]) -> Result<(), String> {
-    // Check for --help flag before API call
-    if has_flag(args, "--help") || has_flag(args, "-h") {
-        print_conv_usage(&args[0]);
-        return Ok(());
+/// Resolve the effective token type for debug logging.
+///
+/// Priority: explicit CLI flag > profile default > inferred from token
+/// availability (user token if present, otherwise bot).
+fn resolve_token_type_for_debug(
+    profile_name: &str,
+    token_type: Option<TokenType>,
+) -> Result<TokenType, String> {
+    if let Some(explicit) = token_type {
+        return Ok(explicit);
     }
 
-    let types = get_option(args, "--types=");
-    let include_private = has_flag(args, "--include-private");
-    let all = has_flag(args, "--all");
-    let limit = get_option(args, "--limit=").and_then(|s| s.parse().ok());
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let filter_strings = get_all_options(args, "--filter=");
-    let raw = should_output_raw(args);
+    let config_path = default_config_path().map_err(|e| e.to_string())?;
+    let profile = resolve_profile_full(&config_path, profile_name)
+        .map_err(|e| format!("Failed to resolve profile '{}': {}", profile_name, e))?;
+
+    if let Some(default_type) = profile.default_token_type {
+        return Ok(default_type);
+    }
+
+    let token_store = create_token_store().map_err(|e| e.to_string())?;
+    let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
+    if token_store.get(&user_token_key).is_ok() {
+        Ok(TokenType::User)
+    } else {
+        Ok(TokenType::Bot)
+    }
+}
+
+pub async fn run_search(cmd: &args::SearchArgs, globals: &GlobalArgs) -> Result<(), String> {
+    let query = cmd.query.clone();
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
+
+    let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
+    let response = commands::search(
+        &client,
+        query,
+        cmd.count,
+        cmd.page,
+        cmd.sort.clone(),
+        cmd.sort_dir.clone(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Display error guidance if response contains a known error
+    crate::api::display_wrapper_error_guidance(&response);
+
+    // Output with or without envelope
+    let output = if raw {
+        serde_json::to_string_pretty(&response).unwrap()
+    } else {
+        let response_value = serde_json::to_value(&response).map_err(|e| e.to_string())?;
+        let wrapped = wrap_with_envelope_and_token_type(
+            response_value,
+            "search.messages",
+            "search",
+            Some(profile_name),
+            token_type,
+        )
+        .await?;
+        serde_json::to_string_pretty(&wrapped).unwrap()
+    };
+
+    println!("{}", output);
+    Ok(())
+}
+
+pub async fn run_conv_list(cmd: &args::ConvListArgs, globals: &GlobalArgs) -> Result<(), String> {
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
 
     // Validate: --types is mutually exclusive with --include-private and --all
-    if types.is_some() && (include_private || all) {
+    if cmd.types.is_some() && (cmd.include_private || cmd.all) {
         return Err("Error: --types cannot be used with --include-private or --all".to_string());
     }
 
     // Resolve types based on flags
-    let resolved_types = if let Some(explicit_types) = types {
+    let resolved_types = if let Some(explicit_types) = cmd.types.clone() {
         // User explicitly specified types
         Some(explicit_types)
-    } else if all {
+    } else if cmd.all {
         // --all flag: include all conversation types
         Some("public_channel,private_channel,im,mpim".to_string())
-    } else if include_private {
-        // --include-private flag: include public and private channels (same as default now)
-        Some("public_channel,private_channel".to_string())
     } else {
-        // No flags: use default (public and private channels)
+        // Default (and --include-private): public and private channels
         Some("public_channel,private_channel".to_string())
     };
 
     // Parse format option (default: json)
-    let format = if let Some(fmt_str) = get_option(args, "--format=") {
-        commands::OutputFormat::parse(&fmt_str)?
+    let format = if let Some(fmt_str) = &cmd.format {
+        commands::OutputFormat::parse(fmt_str)?
     } else {
         commands::OutputFormat::Json
     };
@@ -469,54 +466,30 @@ pub async fn run_conv_list(args: &[String]) -> Result<(), String> {
     }
 
     // Parse sort options
-    let sort_key = if let Some(sort_str) = get_option(args, "--sort=") {
-        Some(commands::SortKey::parse(&sort_str)?)
+    let sort_key = if let Some(sort_str) = &cmd.sort {
+        Some(commands::SortKey::parse(sort_str)?)
     } else {
         None
     };
 
-    let sort_dir = if let Some(dir_str) = get_option(args, "--sort-dir=") {
-        commands::SortDirection::parse(&dir_str)?
+    let sort_dir = if let Some(dir_str) = &cmd.sort_dir {
+        commands::SortDirection::parse(dir_str)?
     } else {
         commands::SortDirection::default()
     };
 
     // Parse filters
-    let filters: Result<Vec<_>, _> = filter_strings
+    let filters: Result<Vec<_>, _> = cmd
+        .filter
         .iter()
         .map(|s| commands::ConversationFilter::parse(s))
         .collect();
     let filters = filters.map_err(|e| e.to_string())?;
 
-    // Get debug level from args
-    let debug_level = debug::get_debug_level(args);
-
     // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
     let token_store_backend = "keyring";
-
-    // Resolve actual token type for debug output
-    let resolved_token_type = if let Some(explicit) = token_type {
-        explicit
-    } else {
-        // Get profile to check default_token_type
-        let config_path = default_config_path().map_err(|e| e.to_string())?;
-        let profile = resolve_profile_full(&config_path, &profile_name)
-            .map_err(|e| format!("Failed to resolve profile '{}': {}", profile_name, e))?;
-
-        if let Some(default_type) = profile.default_token_type {
-            default_type
-        } else {
-            // Infer from token availability
-            let token_store = create_token_store().map_err(|e| e.to_string())?;
-            let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
-            if token_store.get(&user_token_key).is_ok() {
-                TokenType::User
-            } else {
-                TokenType::Bot
-            }
-        }
-    };
-
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
     let endpoint = "https://slack.com/api/conversations.list";
 
     debug::log_api_context(
@@ -529,7 +502,7 @@ pub async fn run_conv_list(args: &[String]) -> Result<(), String> {
     );
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let mut response = commands::conv_list(&client, resolved_types, limit)
+    let mut response = commands::conv_list(&client, resolved_types, cmd.limit)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -572,31 +545,29 @@ pub async fn run_conv_list(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_conv_select(args: &[String]) -> Result<(), String> {
-    // Check for --help flag before API call
-    if has_flag(args, "--help") || has_flag(args, "-h") {
-        print_conv_usage(&args[0]);
-        return Ok(());
-    }
-
-    let types = get_option(args, "--types=");
-    let limit = get_option(args, "--limit=").and_then(|s| s.parse().ok());
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let filter_strings = get_all_options(args, "--filter=");
+pub async fn run_conv_select(
+    cmd: &args::ConvSelectArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
 
     // Parse filters
-    let filters: Result<Vec<_>, _> = filter_strings
+    let filters: Result<Vec<_>, _> = cmd
+        .filter
         .iter()
         .map(|s| commands::ConversationFilter::parse(s))
         .collect();
     let filters = filters.map_err(|e| e.to_string())?;
 
     // Resolve types: default to public_channel,private_channel if not specified
-    let resolved_types = types.or(Some("public_channel,private_channel".to_string()));
+    let resolved_types = cmd
+        .types
+        .clone()
+        .or(Some("public_channel,private_channel".to_string()));
 
     let client = get_api_client_with_token_type(Some(profile_name), token_type).await?;
-    let mut response = commands::conv_list(&client, resolved_types, limit)
+    let mut response = commands::conv_list(&client, resolved_types, cmd.limit)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -612,33 +583,18 @@ pub async fn run_conv_select(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_conv_search(args: &[String]) -> Result<(), String> {
-    // Check for --help flag before pattern extraction
-    if has_flag(args, "--help") || has_flag(args, "-h") {
-        print_conv_usage(&args[0]);
-        return Ok(());
-    }
-
-    // Extract the search pattern (first non-flag argument after "search")
-    let pattern = args
-        .get(3)
-        .filter(|arg| !arg.starts_with("--"))
-        .ok_or_else(|| "Search pattern is required".to_string())?
-        .clone();
-
-    let types = get_option(args, "--types=");
-    let limit = get_option(args, "--limit=").and_then(|s| s.parse().ok());
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
-    let select = has_flag(args, "--select");
-
-    // Parse additional filters from --filter= flags
-    let filter_strings = get_all_options(args, "--filter=");
+pub async fn run_conv_search(
+    cmd: &args::ConvSearchArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let pattern = cmd.pattern.clone();
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
 
     // Parse format option (default: json)
-    let format = if let Some(fmt_str) = get_option(args, "--format=") {
-        commands::OutputFormat::parse(&fmt_str)?
+    let format = if let Some(fmt_str) = &cmd.format {
+        commands::OutputFormat::parse(fmt_str)?
     } else {
         commands::OutputFormat::Json
     };
@@ -652,14 +608,14 @@ pub async fn run_conv_search(args: &[String]) -> Result<(), String> {
     }
 
     // Parse sort options
-    let sort_key = if let Some(sort_str) = get_option(args, "--sort=") {
-        Some(commands::SortKey::parse(&sort_str)?)
+    let sort_key = if let Some(sort_str) = &cmd.sort {
+        Some(commands::SortKey::parse(sort_str)?)
     } else {
         None
     };
 
-    let sort_dir = if let Some(dir_str) = get_option(args, "--sort-dir=") {
-        commands::SortDirection::parse(&dir_str)?
+    let sort_dir = if let Some(dir_str) = &cmd.sort_dir {
+        commands::SortDirection::parse(dir_str)?
     } else {
         commands::SortDirection::default()
     };
@@ -669,15 +625,18 @@ pub async fn run_conv_search(args: &[String]) -> Result<(), String> {
         vec![commands::ConversationFilter::Name(pattern)];
 
     // Parse and add additional filters
-    for filter_str in filter_strings {
-        filters.push(commands::ConversationFilter::parse(&filter_str).map_err(|e| e.to_string())?);
+    for filter_str in &cmd.filter {
+        filters.push(commands::ConversationFilter::parse(filter_str).map_err(|e| e.to_string())?);
     }
 
     // Resolve types: default to public_channel,private_channel if not specified
-    let resolved_types = types.or(Some("public_channel,private_channel".to_string()));
+    let resolved_types = cmd
+        .types
+        .clone()
+        .or(Some("public_channel,private_channel".to_string()));
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let mut response = commands::conv_list(&client, resolved_types, limit)
+    let mut response = commands::conv_list(&client, resolved_types, cmd.limit)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -690,7 +649,7 @@ pub async fn run_conv_search(args: &[String]) -> Result<(), String> {
     }
 
     // If --select flag is present, use interactive selection
-    if select {
+    if cmd.select {
         let items = commands::extract_conversations(&response);
         let selector = commands::StdinSelector;
         let channel_id = selector.select(&items)?;
@@ -720,34 +679,30 @@ pub async fn run_conv_search(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_conv_history(args: &[String]) -> Result<(), String> {
-    // Check for --help flag before API call
-    if has_flag(args, "--help") || has_flag(args, "-h") {
-        print_conv_usage(&args[0]);
-        return Ok(());
-    }
+pub async fn run_conv_history(
+    cmd: &args::ConvHistoryArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
 
-    let interactive = has_flag(args, "--interactive");
-
-    let channel = if interactive {
+    let channel = if cmd.interactive {
         // Use conv_select logic to get channel
-        let types = get_option(args, "--types=");
-        let profile_name_inner = resolve_profile_name(args);
-        let filter_strings = get_all_options(args, "--filter=");
-
         // Parse filters
-        let filters: Result<Vec<_>, _> = filter_strings
+        let filters: Result<Vec<_>, _> = cmd
+            .filter
             .iter()
             .map(|s| commands::ConversationFilter::parse(s))
             .collect();
         let filters = filters.map_err(|e| e.to_string())?;
 
         // Resolve types: default to public_channel,private_channel if not specified
-        let resolved_types = types.or(Some("public_channel,private_channel".to_string()));
+        let resolved_types = cmd
+            .types
+            .clone()
+            .or(Some("public_channel,private_channel".to_string()));
 
-        let token_type_inner = parse_token_type(args)?;
-        let client =
-            get_api_client_with_token_type(Some(profile_name_inner), token_type_inner).await?;
+        let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
         let mut response = commands::conv_list(&client, resolved_types, None)
             .await
             .map_err(|e| e.to_string())?;
@@ -760,46 +715,17 @@ pub async fn run_conv_history(args: &[String]) -> Result<(), String> {
         let selector = commands::StdinSelector;
         selector.select(&items)?
     } else {
-        if args.len() < 4 {
-            return Err("Channel argument required when --interactive is not used".to_string());
-        }
-        args[3].clone()
+        cmd.channel
+            .clone()
+            .ok_or_else(|| "Channel argument required when --interactive is not used".to_string())?
     };
 
-    let limit = get_option(args, "--limit=").and_then(|s| s.parse().ok());
-    let oldest = get_option(args, "--oldest=");
-    let latest = get_option(args, "--latest=");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
-
-    // Get debug level from args
-    let debug_level = debug::get_debug_level(args);
+    let raw = should_output_raw(cmd.raw);
 
     // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
     let token_store_backend = "keyring";
-
-    // Resolve actual token type for debug output
-    let resolved_token_type = if let Some(explicit) = token_type {
-        explicit
-    } else {
-        let config_path = default_config_path().map_err(|e| e.to_string())?;
-        let profile = resolve_profile_full(&config_path, &profile_name)
-            .map_err(|e| format!("Failed to resolve profile '{}': {}", profile_name, e))?;
-
-        if let Some(default_type) = profile.default_token_type {
-            default_type
-        } else {
-            let token_store = create_token_store().map_err(|e| e.to_string())?;
-            let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
-            if token_store.get(&user_token_key).is_ok() {
-                TokenType::User
-            } else {
-                TokenType::Bot
-            }
-        }
-    };
-
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
     let endpoint = "https://slack.com/api/conversations.history";
 
     debug::log_api_context(
@@ -812,9 +738,15 @@ pub async fn run_conv_history(args: &[String]) -> Result<(), String> {
     );
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
-    let mut response = commands::conv_history(&client, channel, limit, oldest, latest)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = commands::conv_history(
+        &client,
+        channel,
+        cmd.limit,
+        cmd.oldest.clone(),
+        cmd.latest.clone(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     // Log error code if present
     debug::log_error_code(
@@ -928,57 +860,18 @@ pub async fn build_thread_get_output(
     serde_json::to_value(wrapped).map_err(|e| e.to_string())
 }
 
-pub async fn run_thread_get(args: &[String]) -> Result<(), String> {
-    // Check for --help flag before API call
-    if has_flag(args, "--help") || has_flag(args, "-h") {
-        print_thread_usage(&args[0]);
-        return Ok(());
-    }
-
-    // Parse required arguments: channel and thread_ts
-    if args.len() < 5 {
-        return Err("Usage: slack thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw] [--profile=NAME] [--token-type=bot|user]".to_string());
-    }
-
-    let channel = args[3].clone();
-    let thread_ts = args[4].clone();
-    let limit = get_option(args, "--limit=").and_then(|s| s.parse().ok());
-    let inclusive = if has_flag(args, "--inclusive") {
-        Some(true)
-    } else {
-        None
-    };
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
-
-    // Get debug level from args
-    let debug_level = debug::get_debug_level(args);
+pub async fn run_thread_get(cmd: &args::ThreadGetArgs, globals: &GlobalArgs) -> Result<(), String> {
+    let channel = cmd.channel.clone();
+    let thread_ts = cmd.thread_ts.clone();
+    let inclusive = if cmd.inclusive { Some(true) } else { None };
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
 
     // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
     let token_store_backend = "keyring";
-
-    // Resolve actual token type for debug output
-    let resolved_token_type = if let Some(explicit) = token_type {
-        explicit
-    } else {
-        let config_path = default_config_path().map_err(|e| e.to_string())?;
-        let profile = resolve_profile_full(&config_path, &profile_name)
-            .map_err(|e| format!("Failed to resolve profile '{}': {}", profile_name, e))?;
-
-        if let Some(default_type) = profile.default_token_type {
-            default_type
-        } else {
-            let token_store = create_token_store().map_err(|e| e.to_string())?;
-            let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
-            if token_store.get(&user_token_key).is_ok() {
-                TokenType::User
-            } else {
-                TokenType::Bot
-            }
-        }
-    };
-
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
     let endpoint = "https://slack.com/api/conversations.replies";
 
     debug::log_api_context(
@@ -995,7 +888,7 @@ pub async fn run_thread_get(args: &[String]) -> Result<(), String> {
         &client,
         channel,
         thread_ts,
-        limit,
+        cmd.limit,
         inclusive,
         raw,
         profile_name,
@@ -1009,39 +902,16 @@ pub async fn run_thread_get(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_users_info(args: &[String]) -> Result<(), String> {
-    let user = args[3].clone();
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
-
-    // Get debug level from args
-    let debug_level = debug::get_debug_level(args);
+pub async fn run_users_info(cmd: &args::UsersInfoArgs, globals: &GlobalArgs) -> Result<(), String> {
+    let user = cmd.user_id.clone();
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
 
     // Log debug information if --debug or --trace flag is present
+    let debug_level = globals.debug_level;
     let token_store_backend = "keyring";
-
-    // Resolve actual token type for debug output
-    let resolved_token_type = if let Some(explicit) = token_type {
-        explicit
-    } else {
-        let config_path = default_config_path().map_err(|e| e.to_string())?;
-        let profile = resolve_profile_full(&config_path, &profile_name)
-            .map_err(|e| format!("Failed to resolve profile '{}': {}", profile_name, e))?;
-
-        if let Some(default_type) = profile.default_token_type {
-            default_type
-        } else {
-            let token_store = create_token_store().map_err(|e| e.to_string())?;
-            let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
-            if token_store.get(&user_token_key).is_ok() {
-                TokenType::User
-            } else {
-                TokenType::Bot
-            }
-        }
-    };
-
+    let resolved_token_type = resolve_token_type_for_debug(&profile_name, token_type)?;
     let endpoint = "https://slack.com/api/users.info";
 
     debug::log_api_context(
@@ -1087,10 +957,12 @@ pub async fn run_users_info(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_users_cache_update(args: &[String]) -> Result<(), String> {
-    let profile_name = resolve_profile_name(args);
-    let force = has_flag(args, "--force");
-    let token_type = parse_token_type(args)?;
+pub async fn run_users_cache_update(
+    cmd: &args::UsersCacheUpdateArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
 
     let config_path = default_config_path().map_err(|e| e.to_string())?;
     let config = load_config(&config_path).map_err(|e| e.to_string())?;
@@ -1101,7 +973,7 @@ pub async fn run_users_cache_update(args: &[String]) -> Result<(), String> {
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
-    commands::update_cache(&client, profile.team_id.clone(), force)
+    commands::update_cache(&client, profile.team_id.clone(), cmd.force)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -1109,16 +981,16 @@ pub async fn run_users_cache_update(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn run_users_resolve_mentions(args: &[String]) -> Result<(), String> {
-    if args.len() < 4 {
-        return Err(
-            "Usage: users resolve-mentions <text> [--profile=NAME] [--format=FORMAT]".to_string(),
-        );
-    }
-
-    let text = args[3].clone();
-    let profile_name = resolve_profile_name(args);
-    let format_str = get_option(args, "--format=").unwrap_or_else(|| "display_name".to_string());
+pub async fn run_users_resolve_mentions(
+    cmd: &args::UsersResolveMentionsArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let text = cmd.text.clone();
+    let profile_name = globals.profile_name();
+    let format_str = cmd
+        .format
+        .clone()
+        .unwrap_or_else(|| "display_name".to_string());
 
     let format = format_str.parse::<commands::MentionFormat>().map_err(|_| {
         format!(
@@ -1159,28 +1031,25 @@ async fn get_team_and_user_ids_from_profile(
     Ok((profile.team_id, profile.user_id))
 }
 
-pub async fn run_msg_post(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_msg_post(cmd: &args::MsgPostArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 5 {
-        return Err("Usage: msg post <channel> <text> [--thread-ts=TS] [--reply-broadcast] [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]".to_string());
-    }
-
-    let channel = args[3].clone();
-    let text = args[4].clone();
-    let thread_ts = get_option(args, "--thread-ts=");
-    let reply_broadcast = has_flag(args, "--reply-broadcast");
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
+    let non_interactive = globals.non_interactive;
+    let channel = cmd.channel.clone();
+    let text = cmd.text.clone();
+    let thread_ts = cmd.thread_ts.clone();
+    let reply_broadcast = cmd.reply_broadcast;
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
 
     // Validate: --reply-broadcast requires --thread-ts
     if reply_broadcast && thread_ts.is_none() {
         return Err("Error: --reply-broadcast requires --thread-ts".to_string());
     }
 
-    let raw = should_output_raw(args);
+    let raw = should_output_raw(cmd.raw);
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
     // Check idempotency if key provided
@@ -1306,21 +1175,18 @@ pub async fn run_msg_post(args: &[String], non_interactive: bool) -> Result<(), 
     Ok(())
 }
 
-pub async fn run_msg_update(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_msg_update(cmd: &args::MsgUpdateArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 6 {
-        return Err("Usage: msg update <channel> <ts> <text> [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]".to_string());
-    }
-
-    let channel = args[3].clone();
-    let ts = args[4].clone();
-    let text = args[5].clone();
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
-    let raw = should_output_raw(args);
+    let non_interactive = globals.non_interactive;
+    let channel = cmd.channel.clone();
+    let ts = cmd.ts.clone();
+    let text = cmd.text.clone();
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
+    let raw = should_output_raw(cmd.raw);
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
@@ -1412,23 +1278,17 @@ pub async fn run_msg_update(args: &[String], non_interactive: bool) -> Result<()
     Ok(())
 }
 
-pub async fn run_msg_delete(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_msg_delete(cmd: &args::MsgDeleteArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 5 {
-        return Err(
-            "Usage: msg delete <channel> <ts> [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]"
-                .to_string(),
-        );
-    }
-
-    let channel = args[3].clone();
-    let ts = args[4].clone();
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
-    let raw = should_output_raw(args);
+    let non_interactive = globals.non_interactive;
+    let channel = cmd.channel.clone();
+    let ts = cmd.ts.clone();
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
+    let raw = should_output_raw(cmd.raw);
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
@@ -1512,24 +1372,18 @@ pub async fn run_msg_delete(args: &[String], non_interactive: bool) -> Result<()
     Ok(())
 }
 
-pub async fn run_react_add(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_react_add(cmd: &args::ReactArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 6 {
-        return Err(
-            "Usage: react add <channel> <ts> <emoji> [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]"
-                .to_string(),
-        );
-    }
-
-    let channel = args[3].clone();
-    let ts = args[4].clone();
-    let emoji = args[5].clone();
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
-    let raw = should_output_raw(args);
+    let non_interactive = globals.non_interactive;
+    let channel = cmd.channel.clone();
+    let ts = cmd.ts.clone();
+    let emoji = cmd.emoji.clone();
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
+    let raw = should_output_raw(cmd.raw);
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
@@ -1615,23 +1469,18 @@ pub async fn run_react_add(args: &[String], non_interactive: bool) -> Result<(),
     Ok(())
 }
 
-pub async fn run_react_remove(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_react_remove(cmd: &args::ReactArgs, globals: &GlobalArgs) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 6 {
-        return Err(
-            "Usage: react remove <channel> <ts> <emoji> [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]".to_string(),
-        );
-    }
-
-    let channel = args[3].clone();
-    let ts = args[4].clone();
-    let emoji = args[5].clone();
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
-    let raw = should_output_raw(args);
+    let non_interactive = globals.non_interactive;
+    let channel = cmd.channel.clone();
+    let ts = cmd.ts.clone();
+    let emoji = cmd.emoji.clone();
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
+    let raw = should_output_raw(cmd.raw);
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
@@ -1717,25 +1566,22 @@ pub async fn run_react_remove(args: &[String], non_interactive: bool) -> Result<
     Ok(())
 }
 
-pub async fn run_file_upload(args: &[String], non_interactive: bool) -> Result<(), String> {
+pub async fn run_file_upload(
+    cmd: &args::FileUploadArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
     use crate::idempotency::{IdempotencyCheckResult, IdempotencyHandler};
 
-    if args.len() < 4 {
-        return Err(
-            "Usage: file upload <path> [--channel=ID] [--channels=IDs] [--title=TITLE] [--comment=TEXT] [--yes] [--profile=NAME] [--token-type=bot|user] [--idempotency-key=KEY]"
-                .to_string(),
-        );
-    }
-
-    let file_path = args[3].clone();
-    let channels = get_option(args, "--channel=").or_else(|| get_option(args, "--channels="));
-    let title = get_option(args, "--title=");
-    let comment = get_option(args, "--comment=");
-    let yes = has_flag(args, "--yes");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let idempotency_key = get_option(args, "--idempotency-key=");
-    let raw = should_output_raw(args);
+    let non_interactive = globals.non_interactive;
+    let file_path = cmd.path.clone();
+    let channels = cmd.channel.clone().or_else(|| cmd.channels.clone());
+    let title = cmd.title.clone();
+    let comment = cmd.comment.clone();
+    let yes = cmd.yes;
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let idempotency_key = cmd.idempotency_key.clone();
+    let raw = should_output_raw(cmd.raw);
 
     let client = get_api_client_with_token_type(Some(profile_name.clone()), token_type).await?;
 
@@ -1839,21 +1685,16 @@ pub async fn run_file_upload(args: &[String], non_interactive: bool) -> Result<(
     Ok(())
 }
 
-pub async fn run_file_download(args: &[String]) -> Result<(), String> {
-    if args.len() < 3 {
-        return Err(
-            "Usage: file download [<file_id>] [--url=URL] [--out=PATH] [--profile=NAME] [--token-type=bot|user]"
-                .to_string(),
-        );
-    }
-
-    // Parse arguments
-    let file_id = args.get(3).filter(|arg| !arg.starts_with("--")).cloned();
-    let url = get_option(args, "--url=");
-    let out = get_option(args, "--out=");
-    let profile_name = resolve_profile_name(args);
-    let token_type = parse_token_type(args)?;
-    let raw = should_output_raw(args);
+pub async fn run_file_download(
+    cmd: &args::FileDownloadArgs,
+    globals: &GlobalArgs,
+) -> Result<(), String> {
+    let file_id = cmd.file_id.clone();
+    let url = cmd.url.clone();
+    let out = cmd.out.clone();
+    let profile_name = globals.profile_name();
+    let token_type = cmd.token_type;
+    let raw = should_output_raw(cmd.raw);
 
     // Validate: at least one of file_id or url must be provided
     if file_id.is_none() && url.is_none() {
@@ -1894,226 +1735,10 @@ pub async fn run_file_download(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn print_conv_usage(prog: &str) {
-    println!("Conv command usage:");
-    println!(
-        "  {} conv list [--types=TYPE] [--include-private] [--all] [--limit=N] [--filter=KEY:VALUE]... [--format=FORMAT] [--sort=KEY] [--sort-dir=DIR] [--raw] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    List conversations with optional filtering and sorting");
-    println!("    Options accept both --option=value and --option value formats");
-    println!("    Default: Includes public and private channels (limit=1000, auto-paginated)");
-    println!("    Type shortcuts (mutually exclusive with --types):");
-    println!("      - --include-private: Include private channels (same as default now)");
-    println!(
-        "      - --all: Include all conversation types (public_channel,private_channel,im,mpim)"
-    );
-    println!("    Filters: name:<glob>, is_member:true|false, is_private:true|false");
-    println!("      - name:<glob>: Filter by channel name (supports * and ? wildcards)");
-    println!("      - is_member:true|false: Filter by membership status");
-    println!("      - is_private:true|false: Filter by channel privacy");
-    println!("    Formats: json (default), jsonl, table, tsv");
-    println!("      - json: JSON format with envelope (use --raw for raw Slack API response)");
-    println!("      - jsonl: JSON Lines format (one object per line)");
-    println!("      - table: Human-readable table format");
-    println!("      - tsv: Tab-separated values");
-    println!("    Sort keys: name, created, num_members");
-    println!("      - name: Sort by channel name");
-    println!("      - created: Sort by creation timestamp");
-    println!("      - num_members: Sort by member count");
-    println!("    Sort direction: asc (default), desc");
-    println!("    Note: --raw is only valid with --format json");
-    println!();
-    println!(
-        "  {} conv search <pattern> [--select] [--types=TYPE] [--limit=N] [--filter=KEY:VALUE]... [--format=FORMAT] [--sort=KEY] [--sort-dir=DIR] [--raw] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Search conversations by name pattern (applies name:<pattern> filter)");
-    println!("    Default: Includes public and private channels (limit=1000, auto-paginated)");
-    println!("    Options accept both --option=value and --option value formats");
-    println!("    --select: Interactively select from results and output channel ID only");
-    println!();
-    println!(
-        "  {} conv select [--types=TYPE] [--filter=KEY:VALUE]... [--profile=NAME]",
-        prog
-    );
-    println!("    Interactively select a conversation and output its channel ID");
-    println!("    Default: Includes public and private channels (limit=1000, auto-paginated)");
-    println!("    Options accept both --option=value and --option value formats");
-    println!();
-    println!(
-        "  {} conv history <channel> [--limit=N] [--oldest=TS] [--latest=TS] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!(
-        "  {} conv history --interactive [--types=TYPE] [--filter=KEY:VALUE]... [--limit=N] [--profile=NAME]",
-        prog
-    );
-    println!("    Select channel interactively before fetching history");
-    println!("    Default: Includes public and private channels (limit=1000, auto-paginated)");
-    println!("    Options accept both --option=value and --option value formats");
-}
-
-pub fn print_thread_usage(prog: &str) {
-    println!("Thread command usage:");
-    println!(
-        "  {} thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Get thread messages (conversation replies) for a specific thread");
-    println!("    Arguments:");
-    println!("      <channel>    - Channel ID containing the thread");
-    println!("      <thread_ts>  - Timestamp of the parent message (thread identifier)");
-    println!("    Options:");
-    println!("      --limit=N           - Number of messages per page (default: 100)");
-    println!("      --inclusive         - Include the parent message in results");
-    println!("      --raw               - Output raw Slack API response without envelope");
-    println!("      --profile=NAME      - Profile to use (default: 'default')");
-    println!("      --token-type=TYPE   - Token type to use (bot or user)");
-    println!("    Default JSON wraps the Slack response and adds response.resolved_users at thread scope");
-    println!("    resolved_users is keyed by user ID and includes cache/users.info hydrated profiles only");
-    println!("    Unresolved IDs may appear separately in response.unresolved_user_ids");
-    println!(
-        "    --raw returns the Slack-native conversations.replies shape without wrapper metadata"
-    );
-    println!("    Note: Automatically follows pagination to retrieve all thread messages");
-}
-
-pub fn print_users_usage(prog: &str) {
-    println!("Users command usage:");
-    println!(
-        "  {} users info <user_id> [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!(
-        "  {} users cache-update [--profile=NAME] [--force] [--token-type=bot|user]",
-        prog
-    );
-    println!("  {} users resolve-mentions <text> [--profile=NAME] [--format=display_name|real_name|username]", prog);
-    println!("  Options accept both --option=value and --option value formats");
-}
-
-pub fn print_msg_usage(prog: &str) {
-    println!("Msg command usage:");
-    println!(
-        "  {} msg post <channel> <text> [--thread-ts=TS] [--reply-broadcast] [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!(
-        "  {} msg update <channel> <ts> <text> [--yes] [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!(
-        "  {} msg delete <channel> <ts> [--yes] [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!("  Options accept both --option=value and --option value formats");
-    println!("  --idempotency-key: Prevent duplicate writes (replays stored result on retry)");
-}
-
-pub fn print_react_usage(prog: &str) {
-    println!("React command usage:");
-    println!(
-        "  {} react add <channel> <ts> <emoji> [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!(
-        "  {} react remove <channel> <ts> <emoji> [--yes] [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!("  Options accept both --option=value and --option value formats");
-    println!("  --idempotency-key: Prevent duplicate writes (replays stored result on retry)");
-}
-
-pub fn print_file_usage(prog: &str) {
-    println!("File command usage:");
-    println!(
-        "  {} file upload <path> [--channel=ID] [--channels=IDs] [--title=TITLE] [--comment=TEXT] [--idempotency-key=KEY] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Upload a file using external upload method");
-    println!("    Requires SLACKCLI_ALLOW_WRITE=true environment variable");
-    println!(
-        "  {} file download [<file_id>] [--url=URL] [--out=PATH] [--profile=NAME] [--token-type=bot|user]",
-        prog
-    );
-    println!("    Download a file from Slack");
-    println!("    Either <file_id> or --url must be provided");
-    println!("    --out: Output path (omit for current directory, '-' for stdout, directory for auto-naming)");
-    println!("  Options accept both --option=value and --option value formats");
-    println!("  --idempotency-key: Prevent duplicate writes (replays stored result on retry, upload only)");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_token_type_equals_format() {
-        let args = vec!["command".to_string(), "--token-type=user".to_string()];
-        let result = parse_token_type(&args).unwrap();
-        assert_eq!(result, Some(TokenType::User));
-    }
-
-    #[test]
-    fn test_parse_token_type_space_separated() {
-        let args = vec![
-            "command".to_string(),
-            "--token-type".to_string(),
-            "bot".to_string(),
-        ];
-        let result = parse_token_type(&args).unwrap();
-        assert_eq!(result, Some(TokenType::Bot));
-    }
-
-    #[test]
-    fn test_parse_token_type_both_values() {
-        // Test user with equals
-        let args1 = vec!["--token-type=user".to_string()];
-        assert_eq!(parse_token_type(&args1).unwrap(), Some(TokenType::User));
-
-        // Test bot with equals
-        let args2 = vec!["--token-type=bot".to_string()];
-        assert_eq!(parse_token_type(&args2).unwrap(), Some(TokenType::Bot));
-
-        // Test user with space
-        let args3 = vec!["--token-type".to_string(), "user".to_string()];
-        assert_eq!(parse_token_type(&args3).unwrap(), Some(TokenType::User));
-
-        // Test bot with space
-        let args4 = vec!["--token-type".to_string(), "bot".to_string()];
-        assert_eq!(parse_token_type(&args4).unwrap(), Some(TokenType::Bot));
-    }
-
-    #[test]
-    fn test_parse_token_type_missing() {
-        let args = vec!["command".to_string()];
-        let result = parse_token_type(&args).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_parse_token_type_missing_value() {
-        let args = vec!["--token-type".to_string()];
-        let result = parse_token_type(&args);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "--token-type requires a value (bot or user)"
-        );
-    }
-
-    #[test]
-    fn test_parse_token_type_invalid_value() {
-        let args = vec!["--token-type=invalid".to_string()];
-        let result = parse_token_type(&args);
-        assert!(result.is_err());
-    }
+    use serial_test::serial;
 
     // Mock token store for testing
     struct MockTokenStore {
@@ -2207,7 +1832,7 @@ mod tests {
         assert!(result.unwrap_err().contains("slack auth login"));
     }
 
-    // Tests for get_option with space-separated format
+    // Tests for get_option with space-separated format (used by `api call` rest parsing)
     #[test]
     fn test_get_option_equals_format() {
         let args = vec!["cmd".to_string(), "--filter=is_private:true".to_string()];
@@ -2258,31 +1883,6 @@ mod tests {
         assert_eq!(get_option(&args, "--filter="), Some("value1".to_string()));
     }
 
-    // Tests for get_all_options with mixed formats
-    #[test]
-    fn test_get_all_options_equals_format() {
-        let args = vec![
-            "cmd".to_string(),
-            "--filter=is_private:true".to_string(),
-            "--filter=is_member:true".to_string(),
-        ];
-        let result = get_all_options(&args, "--filter=");
-        assert_eq!(result, vec!["is_private:true", "is_member:true"]);
-    }
-
-    #[test]
-    fn test_get_all_options_space_separated() {
-        let args = vec![
-            "cmd".to_string(),
-            "--filter".to_string(),
-            "is_private:true".to_string(),
-            "--filter".to_string(),
-            "is_member:true".to_string(),
-        ];
-        let result = get_all_options(&args, "--filter=");
-        assert_eq!(result, vec!["is_private:true", "is_member:true"]);
-    }
-
     #[test]
     fn test_get_all_options_mixed_format() {
         let args = vec![
@@ -2306,96 +1906,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_all_options_rejects_dash_values() {
-        let args = vec![
-            "cmd".to_string(),
-            "--filter=value1".to_string(),
-            "--filter".to_string(),
-            "--other".to_string(), // Should be ignored
-            "--filter".to_string(),
-            "value2".to_string(),
-        ];
-        let result = get_all_options(&args, "--filter=");
-        assert_eq!(result, vec!["value1", "value2"]);
-    }
-
-    #[test]
-    fn test_get_all_options_space_separated_at_end() {
-        // --filter at the end without value should be ignored
-        let args = vec![
-            "cmd".to_string(),
-            "--filter=value1".to_string(),
-            "--filter".to_string(),
-        ];
-        let result = get_all_options(&args, "--filter=");
-        assert_eq!(result, vec!["value1"]);
-    }
-
-    // Integration tests for conv commands with space-separated options
-    #[test]
-    fn test_conv_list_filter_space_separated() {
-        // Test that filter parsing works with space-separated format
-        let args = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--filter".to_string(),
-            "is_private:true".to_string(),
-        ];
-        let filters = get_all_options(&args, "--filter=");
-        assert_eq!(filters.len(), 1);
-        assert_eq!(filters[0], "is_private:true");
-    }
-
-    #[test]
-    fn test_conv_list_multiple_filters_mixed() {
-        let args = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--filter=is_private:true".to_string(),
-            "--filter".to_string(),
-            "is_member:true".to_string(),
-        ];
-        let filters = get_all_options(&args, "--filter=");
-        assert_eq!(filters.len(), 2);
-        assert_eq!(filters[0], "is_private:true");
-        assert_eq!(filters[1], "is_member:true");
-    }
-
-    #[test]
-    fn test_conv_search_options_space_separated() {
-        let args = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "search".to_string(),
-            "pattern".to_string(),
-            "--format".to_string(),
-            "table".to_string(),
-            "--sort".to_string(),
-            "name".to_string(),
-        ];
-        assert_eq!(get_option(&args, "--format="), Some("table".to_string()));
-        assert_eq!(get_option(&args, "--sort="), Some("name".to_string()));
-    }
-
-    #[test]
-    fn test_search_command_options_space_separated() {
-        let args = vec![
-            "slack".to_string(),
-            "search".to_string(),
-            "query".to_string(),
-            "--count".to_string(),
-            "10".to_string(),
-            "--sort".to_string(),
-            "timestamp".to_string(),
-        ];
-        assert_eq!(get_option(&args, "--count="), Some("10".to_string()));
-        assert_eq!(get_option(&args, "--sort="), Some("timestamp".to_string()));
-    }
-
-    // Tests for resolve_profile_name function
+    // Tests for resolve_profile_name (used by `api call` rest parsing)
     #[test]
     fn test_resolve_profile_name_with_equals_format() {
         let args = vec![
@@ -2422,31 +1933,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_profile_name_at_beginning() {
-        let args = vec![
-            "slack".to_string(),
-            "--profile=myprofile".to_string(),
-            "api".to_string(),
-            "call".to_string(),
-            "test.method".to_string(),
-        ];
-        assert_eq!(resolve_profile_name(&args), "myprofile");
-    }
-
-    #[test]
-    fn test_resolve_profile_name_at_end() {
-        let args = vec![
-            "slack".to_string(),
-            "api".to_string(),
-            "call".to_string(),
-            "test.method".to_string(),
-            "--profile=myprofile".to_string(),
-        ];
-        assert_eq!(resolve_profile_name(&args), "myprofile");
-    }
-
-    #[test]
-    #[serial_test::serial]
+    #[serial]
     fn test_resolve_profile_name_env_fallback() {
         // Set environment variable
         std::env::set_var("SLACK_PROFILE", "envprofile");
@@ -2459,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial]
     fn test_resolve_profile_name_default_fallback() {
         // Ensure SLACK_PROFILE is not set
         std::env::remove_var("SLACK_PROFILE");
@@ -2469,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial]
     fn test_resolve_profile_name_flag_overrides_env() {
         // Set environment variable
         std::env::set_var("SLACK_PROFILE", "envprofile");
@@ -2486,159 +1973,59 @@ mod tests {
         std::env::remove_var("SLACK_PROFILE");
     }
 
+    // Tests for GlobalArgs::profile_name resolution
     #[test]
-    #[serial_test::serial]
-    fn test_resolve_profile_name_priority_all_sources() {
-        // Set environment variable
+    #[serial]
+    fn test_global_args_profile_flag_wins() {
         std::env::set_var("SLACK_PROFILE", "envprofile");
-
-        // Test that --profile flag takes highest priority
-        let args = vec![
-            "--profile".to_string(),
-            "flagprofile".to_string(),
-            "slack".to_string(),
-            "api".to_string(),
-            "call".to_string(),
-        ];
-        assert_eq!(resolve_profile_name(&args), "flagprofile");
-
-        // Clean up
+        let globals = GlobalArgs {
+            profile: Some("flagprofile".to_string()),
+            non_interactive: false,
+            debug_level: debug::DebugLevel::Off,
+        };
+        assert_eq!(globals.profile_name(), "flagprofile");
         std::env::remove_var("SLACK_PROFILE");
     }
 
     #[test]
-    fn test_resolve_profile_name_mixed_formats() {
-        // Test that equals format is found even with space format present
-        let args = vec![
-            "slack".to_string(),
-            "--profile=profile1".to_string(),
-            "api".to_string(),
-            "--profile".to_string(),
-            "profile2".to_string(),
-            "call".to_string(),
-        ];
-        // Should return profile1 as equals format is checked first
-        assert_eq!(resolve_profile_name(&args), "profile1");
+    #[serial]
+    fn test_global_args_profile_env_fallback() {
+        std::env::set_var("SLACK_PROFILE", "envprofile");
+        let globals = GlobalArgs {
+            profile: None,
+            non_interactive: false,
+            debug_level: debug::DebugLevel::Off,
+        };
+        assert_eq!(globals.profile_name(), "envprofile");
+        std::env::remove_var("SLACK_PROFILE");
     }
 
     #[test]
-    fn test_conv_list_include_private_flag() {
-        let args = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--include-private".to_string(),
-        ];
-        assert!(has_flag(&args, "--include-private"));
-        assert!(!has_flag(&args, "--all"));
+    #[serial]
+    fn test_global_args_profile_default_fallback() {
+        std::env::remove_var("SLACK_PROFILE");
+        let globals = GlobalArgs {
+            profile: None,
+            non_interactive: false,
+            debug_level: debug::DebugLevel::Off,
+        };
+        assert_eq!(globals.profile_name(), "default");
     }
 
     #[test]
-    fn test_conv_list_all_flag() {
-        let args = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--all".to_string(),
-        ];
-        assert!(!has_flag(&args, "--include-private"));
-        assert!(has_flag(&args, "--all"));
-    }
+    #[serial]
+    fn test_should_output_raw_flag_and_env() {
+        std::env::remove_var("SLACKRS_OUTPUT");
+        assert!(should_output_raw(true));
+        assert!(!should_output_raw(false));
 
-    #[test]
-    fn test_conv_list_types_exclude_private_all() {
-        // This test verifies the flag detection logic
-        // The actual exclusivity check happens in run_conv_list
-        let args_with_types = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--types=public_channel".to_string(),
-        ];
-        assert_eq!(
-            get_option(&args_with_types, "--types="),
-            Some("public_channel".to_string())
-        );
+        std::env::set_var("SLACKRS_OUTPUT", "raw");
+        assert!(should_output_raw(false));
 
-        let args_with_private = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--types=public_channel".to_string(),
-            "--include-private".to_string(),
-        ];
-        assert_eq!(
-            get_option(&args_with_private, "--types="),
-            Some("public_channel".to_string())
-        );
-        assert!(has_flag(&args_with_private, "--include-private"));
-    }
+        std::env::set_var("SLACKRS_OUTPUT", "envelope");
+        assert!(!should_output_raw(false));
+        assert!(should_output_raw(true));
 
-    #[test]
-    fn test_conv_list_types_resolution_logic() {
-        // Test types resolution without flags
-        let args_no_flags = vec!["slack".to_string(), "conv".to_string(), "list".to_string()];
-        let types = get_option(&args_no_flags, "--types=");
-        let include_private = has_flag(&args_no_flags, "--include-private");
-        let all = has_flag(&args_no_flags, "--all");
-        assert!(types.is_none());
-        assert!(!include_private);
-        assert!(!all);
-
-        // Test with --include-private
-        let args_private = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--include-private".to_string(),
-        ];
-        let types = get_option(&args_private, "--types=");
-        let include_private = has_flag(&args_private, "--include-private");
-        let all = has_flag(&args_private, "--all");
-        assert!(types.is_none());
-        assert!(include_private);
-        assert!(!all);
-
-        // Test with --all
-        let args_all = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--all".to_string(),
-        ];
-        let types = get_option(&args_all, "--types=");
-        let include_private = has_flag(&args_all, "--include-private");
-        let all = has_flag(&args_all, "--all");
-        assert!(types.is_none());
-        assert!(!include_private);
-        assert!(all);
-
-        // Test mutual exclusion: --types with --include-private
-        let args_conflict1 = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--types=public_channel".to_string(),
-            "--include-private".to_string(),
-        ];
-        let types = get_option(&args_conflict1, "--types=");
-        let include_private = has_flag(&args_conflict1, "--include-private");
-        assert!(types.is_some());
-        assert!(include_private);
-        // This should trigger error in run_conv_list
-
-        // Test mutual exclusion: --types with --all
-        let args_conflict2 = vec![
-            "slack".to_string(),
-            "conv".to_string(),
-            "list".to_string(),
-            "--types=public_channel".to_string(),
-            "--all".to_string(),
-        ];
-        let types = get_option(&args_conflict2, "--types=");
-        let all = has_flag(&args_conflict2, "--all");
-        assert!(types.is_some());
-        assert!(all);
-        // This should trigger error in run_conv_list
+        std::env::remove_var("SLACKRS_OUTPUT");
     }
 }

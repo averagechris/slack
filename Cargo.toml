@@ -37,6 +37,8 @@ aes-gcm = "0.10"
 rpassword = "7.3"
 regex = "1.11"
 arboard = "3.4"
+clap = { version = "4", features = ["derive", "string"] }
+clap_complete = "4"
 
 # OS keyring token storage (R1/D2: keyring-only, no plaintext files).
 # Platform backends: macOS Keychain, Windows Credential Manager, and Linux

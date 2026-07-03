@@ -1,120 +1,188 @@
 // Use library exports instead of module declarations to avoid duplicate test runs
-use slack::cli::*;
+use clap::{CommandFactory, Parser};
+use slack::cli::args::{
+    ApiCommand, AuthCommand, Cli, Command, ConfigCommand, ConfigOauthCommand, ConvCommand,
+    FileCommand, MsgCommand, ReactCommand, ThreadCommand, UsersCommand,
+};
+use slack::debug::DebugLevel;
 use slack::{auth, cli, commands, profile};
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let raw_args: Vec<String> = std::env::args().collect();
 
-    // Normalize arguments: extract global flags and reposition them after the command
-    // This allows --profile and --non-interactive to work in any position
-    let args = normalize_global_flags(&args);
-
-    // Parse global --non-interactive flag
-    let non_interactive = cli::has_flag(&args, "--non-interactive");
-    let ctx = cli::CliContext::new(non_interactive);
-
-    if args.len() < 2 {
-        print_usage();
+    // Early check for `--help --json` (applies to all commands). This is
+    // intercepted before clap because clap owns --help and would print the
+    // human-readable help instead. The JSON is generated from the clap model.
+    if raw_args.iter().any(|a| a == "--help") && raw_args.iter().any(|a| a == "--json") {
+        handle_help_json(&raw_args);
         return;
     }
 
-    // Early check for --help --json (applies to all commands)
-    if cli::has_flag(&args, "--help") && cli::has_flag(&args, "--json") {
-        // Extract command name from args (skip program name and filter out flags)
-        let command_parts: Vec<String> = args[1..]
-            .iter()
-            .filter(|arg| !arg.starts_with("--"))
-            .map(|s| s.to_string())
-            .collect();
-
-        if !command_parts.is_empty() {
-            let command_name = command_parts.join(" ");
-            match cli::generate_help(&command_name) {
-                Ok(help) => {
-                    let json = serde_json::to_string_pretty(&help).unwrap();
-                    println!("{}", json);
-                    return;
-                }
-                Err(e) => {
-                    eprintln!("Help generation failed: {}", e);
-                    std::process::exit(1);
-                }
+    // Parse with clap. Exit-code contract (preserved from the pre-clap CLI):
+    // help/version exit 0; usage errors exit 1 (clap's default of 2 is
+    // reserved for "interactive input required in non-interactive mode").
+    let cli_args = match Cli::try_parse_from(&raw_args) {
+        Ok(cli_args) => cli_args,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            let _ = e.print();
+            match e.kind() {
+                ErrorKind::DisplayHelp
+                | ErrorKind::DisplayVersion
+                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => std::process::exit(0),
+                _ => std::process::exit(1),
             }
         }
-    }
+    };
 
-    match args[1].as_str() {
-        "--version" | "-v" => {
-            print_version();
-            return;
-        }
-        "api" => {
-            if args.len() > 2 && args[2] == "call" {
-                // Run api call command
-                let api_args: Vec<String> = args[3..].to_vec();
-                if let Err(e) = cli::run_api_call(api_args).await {
+    let ctx = cli::CliContext::new(cli_args.non_interactive);
+    let debug_level = if cli_args.trace {
+        DebugLevel::Trace
+    } else if cli_args.debug || slack::debug::enabled() {
+        DebugLevel::Debug
+    } else {
+        DebugLevel::Off
+    };
+
+    let globals = cli::GlobalArgs {
+        profile: cli_args.profile.clone(),
+        non_interactive: ctx.is_non_interactive(),
+        debug_level,
+    };
+
+    match &cli_args.command {
+        Command::Api { command } => match command {
+            ApiCommand::Call(call_args) => {
+                // `api call` keeps free-form parsing over the trailing args;
+                // pass through global flags so --profile/--debug/--trace work
+                // in any position.
+                let mut rest = call_args.rest.clone();
+                if let Some(profile) = &globals.profile {
+                    if cli::get_option(&rest, "--profile=").is_none() {
+                        rest.push(format!("--profile={}", profile));
+                    }
+                }
+                if globals.debug_level >= DebugLevel::Trace && !cli::has_flag(&rest, "--trace") {
+                    rest.push("--trace".to_string());
+                } else if globals.debug_level >= DebugLevel::Debug
+                    && !cli::has_flag(&rest, "--debug")
+                {
+                    rest.push("--debug".to_string());
+                }
+                if let Err(e) = cli::run_api_call(rest).await {
                     handle_command_error(&e.to_string(), "Error");
                 }
-            } else {
-                print_api_usage();
             }
-        }
-        "auth" => {
-            handle_auth_command(&args, &ctx).await;
-        }
-        "config" => {
-            handle_config_command(&args);
-        }
-        "search" => {
-            if args.len() < 3 {
-                eprintln!(
-                    "Usage: {} search <query> [--count=N] [--page=N] [--sort=TYPE] [--sort_dir=DIR] [--profile=NAME]",
-                    args[0]
-                );
-                std::process::exit(1);
-            }
-            if let Err(e) = run_search(&args).await {
+        },
+        Command::Auth { command } => handle_auth_command(command, &globals, &ctx).await,
+        Command::Config { command } => handle_config_command(command),
+        Command::Search(search_args) => {
+            if let Err(e) = cli::run_search(search_args, &globals).await {
                 handle_command_error(&e.to_string(), "Search failed");
             }
         }
-        "conv" => {
-            handle_conv_command(&args).await;
-        }
-        "thread" => {
-            handle_thread_command(&args).await;
-        }
-        "users" => {
-            handle_users_command(&args).await;
-        }
-        "msg" => {
-            handle_msg_command(&args, &ctx).await;
-        }
-        "react" => {
-            handle_react_command(&args, &ctx).await;
-        }
-        "file" => {
-            handle_file_command(&args, &ctx).await;
-        }
-        "commands" => {
-            // Check for --json flag
-            if cli::has_flag(&args, "--json") {
+        Command::Conv { command } => match command {
+            ConvCommand::List(list_args) => {
+                if let Err(e) = cli::run_conv_list(list_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Conv list failed");
+                }
+            }
+            ConvCommand::Select(select_args) => {
+                if let Err(e) = cli::run_conv_select(select_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Conv select failed");
+                }
+            }
+            ConvCommand::Search(search_args) => {
+                if let Err(e) = cli::run_conv_search(search_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Conv search failed");
+                }
+            }
+            ConvCommand::History(history_args) => {
+                if let Err(e) = cli::run_conv_history(history_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Conv history failed");
+                }
+            }
+        },
+        Command::Thread { command } => match command {
+            ThreadCommand::Get(get_args) => {
+                if let Err(e) = cli::run_thread_get(get_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Thread get failed");
+                }
+            }
+        },
+        Command::Users { command } => match command {
+            UsersCommand::Info(info_args) => {
+                if let Err(e) = cli::run_users_info(info_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Users info failed");
+                }
+            }
+            UsersCommand::CacheUpdate(update_args) => {
+                if let Err(e) = cli::run_users_cache_update(update_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Users cache-update failed");
+                }
+            }
+            UsersCommand::ResolveMentions(resolve_args) => {
+                if let Err(e) = cli::run_users_resolve_mentions(resolve_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Users resolve-mentions failed");
+                }
+            }
+        },
+        Command::Msg { command } => match command {
+            MsgCommand::Post(post_args) => {
+                if let Err(e) = cli::run_msg_post(post_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Msg post failed");
+                }
+            }
+            MsgCommand::Update(update_args) => {
+                if let Err(e) = cli::run_msg_update(update_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Msg update failed");
+                }
+            }
+            MsgCommand::Delete(delete_args) => {
+                if let Err(e) = cli::run_msg_delete(delete_args, &globals).await {
+                    handle_command_error(&e.to_string(), "Msg delete failed");
+                }
+            }
+        },
+        Command::React { command } => match command {
+            ReactCommand::Add(react_args) => {
+                if let Err(e) = cli::run_react_add(react_args, &globals).await {
+                    handle_command_error(&e.to_string(), "React add failed");
+                }
+            }
+            ReactCommand::Remove(react_args) => {
+                if let Err(e) = cli::run_react_remove(react_args, &globals).await {
+                    handle_command_error(&e.to_string(), "React remove failed");
+                }
+            }
+        },
+        Command::File { command } => match command {
+            FileCommand::Upload(upload_args) => {
+                if let Err(e) = cli::run_file_upload(upload_args, &globals).await {
+                    handle_command_error(&e.to_string(), "File upload failed");
+                }
+            }
+            FileCommand::Download(download_args) => {
+                if let Err(e) = cli::run_file_download(download_args, &globals).await {
+                    handle_command_error(&e.to_string(), "File download failed");
+                }
+            }
+        },
+        Command::Commands { json } => {
+            if *json {
                 let response = cli::generate_commands_list();
                 let json = serde_json::to_string_pretty(&response).unwrap();
                 println!("{}", json);
             } else {
-                eprintln!("Usage: {} commands --json", args[0]);
+                eprintln!("Usage: slack commands --json");
                 std::process::exit(1);
             }
         }
-        "schema" => {
-            // Parse --command and --output flags
-            let command = cli::get_option(&args, "--command=");
-            let output = cli::get_option(&args, "--output=");
-
-            if let (Some(cmd), Some(out)) = (command, output) {
+        Command::Schema { command, output } => match (command, output) {
+            (Some(cmd), Some(out)) => {
                 if out == "json-schema" {
-                    match cli::generate_schema(&cmd) {
+                    match cli::generate_schema(cmd) {
                         Ok(schema_response) => {
                             let json = serde_json::to_string_pretty(&schema_response).unwrap();
                             println!("{}", json);
@@ -127,119 +195,59 @@ async fn main() {
                     eprintln!("Invalid output format. Use --output json-schema");
                     std::process::exit(1);
                 }
-            } else {
-                eprintln!(
-                    "Usage: {} schema --command <cmd> --output json-schema",
-                    args[0]
-                );
+            }
+            _ => {
+                eprintln!("Usage: slack schema --command <cmd> --output json-schema");
                 std::process::exit(1);
             }
-        }
-        "doctor" => {
-            // Check for --help or -h flag first
-            if cli::has_flag(&args, "--help") || cli::has_flag(&args, "-h") {
-                println!("Doctor diagnostics command");
-                println!();
-                println!("USAGE:");
-                println!("    slack doctor [OPTIONS]");
-                println!();
-                println!("OPTIONS:");
-                println!("    --profile=<name>    Profile to diagnose (default: 'default')");
-                println!("    --json              Output in JSON format");
-                println!("    --help, -h          Show this help message");
-                println!();
-                println!("DESCRIPTION:");
-                println!("    Shows diagnostic information about the CLI environment:");
-                println!("    - Profile configuration path");
-                println!("    - Token store backend and path");
-                println!("    - Token availability (bot/user)");
-                println!("    - Scope hints for common permission issues");
-                println!();
-                println!("EXAMPLES:");
-                println!("    slack doctor");
-                println!("    slack doctor --profile=work");
-                println!("    slack doctor --json");
-                return;
-            }
-
-            // Parse --profile and --json flags
-            let profile_name = cli::get_option(&args, "--profile=");
-            let json_output = cli::has_flag(&args, "--json");
-
-            if let Err(e) = commands::doctor(profile_name, json_output) {
+        },
+        Command::Doctor(doctor_args) => {
+            if let Err(e) = commands::doctor(globals.profile.clone(), doctor_args.json) {
                 handle_command_error(&e.to_string(), "Doctor command failed");
             }
         }
-        "install-skills" => {
-            if let Err(e) = cli::run_install_skill(&args[2..]) {
+        Command::InstallSkills(install_args) => {
+            if let Err(e) = cli::run_install_skill(install_args) {
                 handle_command_error(&e, "Skill installation failed");
             }
         }
-        "--help" | "-h" => {
-            // Check for --json flag
-            if cli::has_flag(&args, "--json") {
-                // For top-level help, show all commands
-                let response = cli::generate_commands_list();
-                let json = serde_json::to_string_pretty(&response).unwrap();
-                println!("{}", json);
-            } else {
-                print_help();
-            }
-        }
-        _ => {
-            print_usage();
+        Command::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(*shell, &mut cmd, "slack", &mut std::io::stdout());
         }
     }
 }
 
-/// Normalize global flags by moving them after the command
-/// This allows --profile and --non-interactive to work in any position
+/// Handle `--help --json` (structured help generated from the clap model).
 ///
-/// For example:
-/// - `slack --profile work api call ...` becomes `slack api call ... --profile work`
-/// - `slack --non-interactive --profile test search query` becomes `slack search query --non-interactive --profile test`
-fn normalize_global_flags(args: &[String]) -> Vec<String> {
-    if args.len() < 2 {
-        return args.to_vec();
+/// With a command path (e.g. `slack conv list --help --json`) this prints
+/// structured help for that command; without one (`slack --help --json`) it
+/// prints the full commands list.
+fn handle_help_json(raw_args: &[String]) {
+    let command_parts: Vec<String> = raw_args[1..]
+        .iter()
+        .filter(|arg| !arg.starts_with("--") && !arg.starts_with('-'))
+        .map(|s| s.to_string())
+        .collect();
+
+    if command_parts.is_empty() {
+        let response = cli::generate_commands_list();
+        let json = serde_json::to_string_pretty(&response).unwrap();
+        println!("{}", json);
+        return;
     }
 
-    let mut result = vec![args[0].clone()]; // Keep program name
-    let mut global_flags = Vec::new();
-    let mut command_and_rest = Vec::new();
-    let mut found_command = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        let arg = &args[i];
-
-        // Check if this is a global flag
-        if !found_command && (arg == "--profile" || arg == "--non-interactive") {
-            global_flags.push(arg.clone());
-            // Check if this flag has a value (for --profile)
-            if arg == "--profile" && i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                i += 1;
-                global_flags.push(args[i].clone());
-            }
-        } else if !found_command && arg.starts_with("--profile=") {
-            // Handle --profile=value format
-            global_flags.push(arg.clone());
-        } else if !found_command && !arg.starts_with("--") {
-            // First non-flag argument is the command
-            found_command = true;
-            command_and_rest.push(arg.clone());
-        } else {
-            // Everything else goes into command_and_rest
-            command_and_rest.push(arg.clone());
+    let command_name = command_parts.join(" ");
+    match cli::generate_help(&command_name) {
+        Ok(help) => {
+            let json = serde_json::to_string_pretty(&help).unwrap();
+            println!("{}", json);
         }
-
-        i += 1;
+        Err(e) => {
+            eprintln!("Help generation failed: {}", e);
+            std::process::exit(1);
+        }
     }
-
-    // Reconstruct: program name + command + rest + global flags
-    result.extend(command_and_rest);
-    result.extend(global_flags);
-
-    result
 }
 
 /// Handle command error and exit with appropriate code
@@ -258,677 +266,129 @@ fn handle_command_error(error: &str, prefix: &str) -> ! {
 }
 
 /// Handle auth subcommand dispatch
-async fn handle_auth_command(args: &[String], ctx: &cli::CliContext) {
-    if args.len() < 3 {
-        print_auth_usage();
-        return;
-    }
-    match args[2].as_str() {
-        "login" => {
-            if let Err(e) = cli::run_auth_login(&args[3..], ctx.is_non_interactive()).await {
+async fn handle_auth_command(
+    command: &AuthCommand,
+    globals: &cli::GlobalArgs,
+    ctx: &cli::CliContext,
+) {
+    match command {
+        AuthCommand::Login(login_args) => {
+            if let Err(e) = cli::run_auth_login(login_args, ctx.is_non_interactive()).await {
                 handle_command_error(&e.to_string(), "Login failed");
             }
         }
-        "status" => {
-            let profile_name = args.get(3).cloned();
-            if let Err(e) = auth::status(profile_name) {
+        AuthCommand::Status { profile_name } => {
+            if let Err(e) = auth::status(profile_name.clone()) {
                 handle_command_error(&e.to_string(), "Status command failed");
             }
         }
-        "list" => {
+        AuthCommand::List => {
             if let Err(e) = auth::list() {
                 handle_command_error(&e.to_string(), "List command failed");
             }
         }
-        "rename" => {
-            if args.len() < 5 {
-                eprintln!("Usage: {} auth rename <old_name> <new_name>", args[0]);
-                std::process::exit(1);
-            }
-            if let Err(e) = auth::rename(args[3].clone(), args[4].clone()) {
+        AuthCommand::Rename { old_name, new_name } => {
+            if let Err(e) = auth::rename(old_name.clone(), new_name.clone()) {
                 handle_command_error(&e.to_string(), "Rename command failed");
             }
         }
-        "logout" => {
-            let profile_name = args.get(3).cloned();
-            if let Err(e) = auth::logout(profile_name) {
+        AuthCommand::Logout { profile_name } => {
+            if let Err(e) = auth::logout(profile_name.clone()) {
                 handle_command_error(&e.to_string(), "Logout command failed");
             }
         }
-        "export" => {
-            cli::handle_export_command(&args[3..]).await;
+        AuthCommand::Export(export_args) => {
+            cli::handle_export_command(export_args, globals.profile.clone()).await;
         }
-        "import" => {
-            cli::handle_import_command(&args[3..]).await;
+        AuthCommand::Import(import_args) => {
+            cli::handle_import_command(import_args).await;
         }
-        "migrate" => {
-            let path = cli::get_option(&args[3..], "--path=");
-            if let Err(e) = auth::migrate(path) {
+        AuthCommand::Migrate { path } => {
+            if let Err(e) = auth::migrate(path.clone()) {
                 handle_command_error(&e.to_string(), "Migrate command failed");
             }
-        }
-        _ => {
-            print_auth_usage();
         }
     }
 }
 
 /// Handle config subcommand dispatch
-fn handle_config_command(args: &[String]) {
-    if args.len() < 3 {
-        print_config_usage(&args[0]);
-        return;
-    }
-    match args[2].as_str() {
-        "oauth" => {
-            if args.len() < 4 {
-                print_config_oauth_usage(&args[0]);
-                std::process::exit(1);
-            }
-            match args[3].as_str() {
-                "set" => {
-                    if let Err(e) = run_config_oauth_set(&args[4..]) {
-                        handle_command_error(&e, "OAuth config set failed");
-                    }
-                }
-                "show" => {
-                    if let Err(e) = run_config_oauth_show(&args[4..]) {
-                        handle_command_error(&e, "OAuth config show failed");
-                    }
-                }
-                "delete" => {
-                    if let Err(e) = run_config_oauth_delete(&args[4..]) {
-                        handle_command_error(&e, "OAuth config delete failed");
-                    }
-                }
-                _ => {
-                    print_config_oauth_usage(&args[0]);
+fn handle_config_command(command: &ConfigCommand) {
+    match command {
+        ConfigCommand::Oauth { command } => match command {
+            ConfigOauthCommand::Set(set_args) => {
+                if let Err(e) = run_config_oauth_set(set_args) {
+                    handle_command_error(&e, "OAuth config set failed");
                 }
             }
-        }
-        "set" => {
-            if let Err(e) = run_config_set(&args[3..]) {
+            ConfigOauthCommand::Show { profile_name } => {
+                if let Err(e) =
+                    commands::oauth_show(profile_name.clone()).map_err(|e| e.to_string())
+                {
+                    handle_command_error(&e, "OAuth config show failed");
+                }
+            }
+            ConfigOauthCommand::Delete { profile_name } => {
+                if let Err(e) =
+                    commands::oauth_delete(profile_name.clone()).map_err(|e| e.to_string())
+                {
+                    handle_command_error(&e, "OAuth config delete failed");
+                }
+            }
+        },
+        ConfigCommand::Set {
+            profile_name,
+            token_type,
+        } => {
+            if let Err(e) = run_config_set(profile_name, *token_type) {
                 handle_command_error(&e, "Config set failed");
             }
         }
-        _ => {
-            print_config_usage(&args[0]);
-        }
     }
-}
-
-/// Handle conv subcommand dispatch
-async fn handle_conv_command(args: &[String]) {
-    if args.len() < 3 {
-        print_conv_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "list" => {
-            if let Err(e) = run_conv_list(args).await {
-                handle_command_error(&e.to_string(), "Conv list failed");
-            }
-        }
-        "select" => {
-            if let Err(e) = run_conv_select(args).await {
-                handle_command_error(&e.to_string(), "Conv select failed");
-            }
-        }
-        "search" => {
-            if let Err(e) = run_conv_search(args).await {
-                handle_command_error(&e.to_string(), "Conv search failed");
-            }
-        }
-        "history" => {
-            // --interactive flag makes channel argument optional
-            let has_interactive = args.iter().any(|arg| arg == "--interactive");
-            if !has_interactive && args.len() < 4 {
-                eprintln!(
-                    "Usage: {} conv history <channel> [--limit=N] [--profile=NAME]",
-                    args[0]
-                );
-                eprintln!(
-                    "   or: {} conv history --interactive [--filter=KEY:VALUE]... [--profile=NAME]",
-                    args[0]
-                );
-                std::process::exit(1);
-            }
-            if let Err(e) = run_conv_history(args).await {
-                handle_command_error(&e.to_string(), "Conv history failed");
-            }
-        }
-        _ => print_conv_usage(&args[0]),
-    }
-}
-
-/// Handle thread subcommand dispatch
-async fn handle_thread_command(args: &[String]) {
-    if args.len() < 3 {
-        cli::print_thread_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "get" => {
-            if args.len() < 5 && !cli::has_flag(args, "--help") && !cli::has_flag(args, "-h") {
-                eprintln!(
-                    "Usage: {} thread get <channel> <thread_ts> [--limit=N] [--inclusive] [--raw] [--profile=NAME] [--token-type=bot|user]",
-                    args[0]
-                );
-                std::process::exit(1);
-            }
-            if let Err(e) = cli::run_thread_get(args).await {
-                handle_command_error(&e.to_string(), "Thread get failed");
-            }
-        }
-        _ => {
-            cli::print_thread_usage(&args[0]);
-        }
-    }
-}
-
-/// Handle users subcommand dispatch
-async fn handle_users_command(args: &[String]) {
-    if args.len() < 3 {
-        print_users_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "info" => {
-            if args.len() < 4 {
-                eprintln!("Usage: {} users info <user_id> [--profile=NAME]", args[0]);
-                std::process::exit(1);
-            }
-            if let Err(e) = run_users_info(args).await {
-                handle_command_error(&e.to_string(), "Users info failed");
-            }
-        }
-        "cache-update" => {
-            if let Err(e) = run_users_cache_update(args).await {
-                handle_command_error(&e.to_string(), "Users cache-update failed");
-            }
-        }
-        "resolve-mentions" => {
-            if let Err(e) = run_users_resolve_mentions(args).await {
-                handle_command_error(&e.to_string(), "Users resolve-mentions failed");
-            }
-        }
-        _ => print_users_usage(&args[0]),
-    }
-}
-
-/// Handle msg subcommand dispatch
-async fn handle_msg_command(args: &[String], ctx: &cli::CliContext) {
-    if args.len() < 3 {
-        print_msg_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "post" => {
-            if let Err(e) = run_msg_post(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "Msg post failed");
-            }
-        }
-        "update" => {
-            if let Err(e) = run_msg_update(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "Msg update failed");
-            }
-        }
-        "delete" => {
-            if let Err(e) = run_msg_delete(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "Msg delete failed");
-            }
-        }
-        _ => print_msg_usage(&args[0]),
-    }
-}
-
-/// Handle react subcommand dispatch
-async fn handle_react_command(args: &[String], ctx: &cli::CliContext) {
-    if args.len() < 3 {
-        print_react_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "add" => {
-            if let Err(e) = run_react_add(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "React add failed");
-            }
-        }
-        "remove" => {
-            if let Err(e) = run_react_remove(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "React remove failed");
-            }
-        }
-        _ => print_react_usage(&args[0]),
-    }
-}
-
-/// Handle file subcommand dispatch
-async fn handle_file_command(args: &[String], ctx: &cli::CliContext) {
-    if args.len() < 3 {
-        print_file_usage(&args[0]);
-        std::process::exit(1);
-    }
-    match args[2].as_str() {
-        "upload" => {
-            if let Err(e) = run_file_upload(args, ctx.is_non_interactive()).await {
-                handle_command_error(&e.to_string(), "File upload failed");
-            }
-        }
-        "download" => {
-            if let Err(e) = cli::run_file_download(args).await {
-                handle_command_error(&e.to_string(), "File download failed");
-            }
-        }
-        _ => print_file_usage(&args[0]),
-    }
-}
-
-/// Print version information
-fn print_version() {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-    const NAME: &str = env!("CARGO_PKG_NAME");
-    println!("{} {}", NAME, VERSION);
-}
-
-/// Print CLI help information
-fn print_help() {
-    println!("Slack CLI");
-    println!();
-    println!("USAGE:");
-    println!("    slack [--non-interactive] [COMMAND] [OPTIONS]");
-    println!();
-    println!("GLOBAL OPTIONS:");
-    println!("    --non-interactive              Run without interactive prompts (auto-enabled when stdin is not a TTY)");
-    println!("    --debug                        Show debug information (profile, token type, API method)");
-    println!("    --trace                        Show verbose trace information");
-    println!();
-    println!("COMMANDS:");
-    println!("    api call <method> [params...]    Call a Slack API method");
-    println!("    auth login [profile_name]        Authenticate with Slack");
-    println!("    auth status [profile_name]       Show profile status");
-    println!("    auth list                        List all profiles");
-    println!("    auth rename <old> <new>          Rename a profile");
-    println!("    auth logout [profile_name]       Remove authentication");
-    println!("    auth migrate [--path <file>]     Move legacy tokens.json into the OS keyring");
-    println!("    config oauth set <profile>       Set OAuth configuration for a profile");
-    println!("    config oauth show <profile>      Show OAuth configuration for a profile");
-    println!("    config oauth delete <profile>    Delete OAuth configuration for a profile");
-    println!("    config set <profile> --token-type <type>  Set default token type (bot/user)");
-    println!("    search <query>                   Search messages");
-    println!("    conv list                        List conversations (supports --filter, --format, --sort)");
-    println!("    conv search <pattern>            Search conversations by name");
-    println!("    conv select                      Interactively select a conversation");
-    println!(
-        "    conv history <channel>           Get conversation history (supports --interactive)"
-    );
-    println!(
-        "    thread get <channel> <thread_ts> Get thread messages (supports --limit, --inclusive)"
-    );
-    println!("    users info <user_id>             Get user information");
-    println!("    users cache-update               Update user cache for mention resolution");
-    println!("    users resolve-mentions <text>    Resolve user mentions in text");
-    println!("    msg post <channel> <text>        Post a message (requires SLACKCLI_ALLOW_WRITE=true, supports --thread-ts, --reply-broadcast, and --idempotency-key)");
-    println!("    msg update <channel> <ts> <text> Update a message (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)");
-    println!("    msg delete <channel> <ts>        Delete a message (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)");
-    println!(
-        "    react add <channel> <ts> <emoji> Add a reaction (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)"
-    );
-    println!("    react remove <channel> <ts> <emoji> Remove a reaction (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)");
-    println!("    file upload <path>               Upload a file (external upload method, supports --idempotency-key)");
-    println!(
-        "    file download [<file_id>]        Download a file from Slack (supports --url, --out)"
-    );
-    println!("    doctor [--profile=NAME] [--json] Show diagnostic information");
-    println!("    install-skills [source] [--global] Install agent skill (default: self)");
-    println!();
-    println!("API CALL OPTIONS:");
-    println!("    <method>                         Slack API method (e.g., chat.postMessage)");
-    println!("    key=value                        Request parameters");
-    println!("    --json                           Send as JSON body (default: form-urlencoded)");
-    println!("    --get                            Use GET method (default: POST)");
-    println!(
-        "    --raw                            Output raw Slack API response (without envelope)"
-    );
-    println!();
-    println!("OUTPUT:");
-    println!("    All commands output JSON with unified envelope: {{response, meta}}");
-    println!("    Use --raw flag or SLACKRS_OUTPUT=raw to get raw Slack API response");
-    println!();
-    println!("ENVIRONMENT VARIABLES:");
-    println!("    SLACKRS_OUTPUT=raw|envelope    Set default output format (default: envelope)");
-    println!("    SLACKCLI_ALLOW_WRITE=true|false  Control write operations (default: true)");
-    println!("    SLACK_PROFILE=<name>           Select profile (default: default)");
-    println!();
-    println!("EXAMPLES:");
-    println!("    # Profile selection");
-    println!("    SLACK_PROFILE=work slack conv list  # Use 'work' profile");
-    println!("    slack msg post C123 \"Hello\" --profile=work  # Use 'work' profile via flag");
-    println!();
-    println!("    # API calls");
-    println!("    slack api call users.info user=U123456 --get");
-    println!("    slack api call chat.postMessage channel=C123 text=Hello --debug");
-    println!("    slack api call chat.postMessage --json channel=C123 text=Hello");
-    println!();
-    println!("    # Output control");
-    println!("    SLACKRS_OUTPUT=raw slack conv list  # Raw output without envelope");
-}
-
-fn print_usage() {
-    println!("Slack CLI - Usage:");
-    println!("  [--non-interactive]                Run without interactive prompts (auto when stdin not a TTY)");
-    println!("  api call <method> [params...]  - Call a Slack API method");
-    println!("  auth login [profile_name]      - Authenticate with Slack");
-    println!("  auth status [profile_name]     - Show profile status");
-    println!("  auth list                      - List all profiles");
-    println!("  auth rename <old> <new>        - Rename a profile");
-    println!("  auth logout [profile_name]     - Remove authentication");
-    println!("  auth export [options]          - Export profiles to encrypted file");
-    println!("  auth import [options]          - Import profiles from encrypted file");
-    println!("  auth migrate [--path <file>]   - Move legacy tokens.json into the OS keyring");
-    println!("  config oauth set <profile>     - Set OAuth configuration for a profile");
-    println!("  config oauth show <profile>    - Show OAuth configuration for a profile");
-    println!("  config oauth delete <profile>  - Delete OAuth configuration for a profile");
-    println!("  config set <profile> --token-type <type> - Set default token type (bot/user)");
-    println!("  search <query>                 - Search messages (supports --count, --page, --sort, --sort_dir)");
-    println!("  conv list                      - List conversations (supports --filter, --format, --sort)");
-    println!("  conv search <pattern>          - Search conversations by name (supports --select)");
-    println!("  conv select                    - Interactively select a conversation");
-    println!(
-        "  conv history <channel>         - Get conversation history (supports --interactive)"
-    );
-    println!(
-        "  thread get <channel> <thread_ts> - Get thread messages (supports --limit, --inclusive)"
-    );
-    println!("  users info <user_id>           - Get user information");
-    println!("  users cache-update             - Update user cache for mention resolution (supports --profile, --force)");
-    println!("  users resolve-mentions <text>  - Resolve user mentions in text (supports --profile, --format)");
-    println!("  msg post <channel> <text>      - Post a message (requires SLACKCLI_ALLOW_WRITE=true, supports --thread-ts, --reply-broadcast, and --idempotency-key)");
-    println!("  msg update <channel> <ts> <text> - Update a message (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)");
-    println!(
-        "  msg delete <channel> <ts>      - Delete a message (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)"
-    );
-    println!(
-        "  react add <channel> <ts> <emoji> - Add a reaction (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)"
-    );
-    println!("  react remove <channel> <ts> <emoji> - Remove a reaction (requires SLACKCLI_ALLOW_WRITE=true, supports --idempotency-key)");
-    println!("  file upload <path>             - Upload a file using external upload method (supports --idempotency-key)");
-    println!(
-        "  file download [<file_id>]      - Download a file from Slack (supports --url, --out)"
-    );
-    println!("  doctor [options]               - Show diagnostic information (supports --profile, --json)");
-    println!("  install-skills [source] [--global] - Install agent skill (default: self, supports local:<path>)");
-    println!("  --help, -h                     - Show help");
-    println!("  --version, -v                  - Show version");
-}
-
-fn print_api_usage() {
-    println!("API command usage:");
-    println!("  api call <method> [params...]  - Call a Slack API method");
-    println!();
-    println!("OPTIONS:");
-    println!("    <method>                     Slack API method (e.g., chat.postMessage)");
-    println!("    key=value                    Request parameters");
-    println!("    --json                       Send as JSON body (default: form-urlencoded)");
-    println!("    --get                        Use GET method (default: POST)");
-    println!("    --raw                        Output raw Slack API response (without envelope)");
-    println!("    --debug                      Show debug information");
-    println!("    --trace                      Show verbose trace information");
-    println!();
-    println!("OUTPUT FORMAT:");
-    println!("    Default: JSON with 'response' and 'meta' fields (unified envelope)");
-    println!("    With --raw or SLACKRS_OUTPUT=raw: Raw Slack API response only");
-    println!();
-    println!("EXAMPLES:");
-    println!("    slack api call users.info user=U123456 --get");
-    println!("    slack api call chat.postMessage channel=C123 text=Hello --debug");
-    println!("    SLACKRS_OUTPUT=raw slack api call conversations.list");
-}
-
-fn print_auth_usage() {
-    println!("Auth command usage:");
-    println!("  auth login [profile_name] [options] - Authenticate with Slack");
-    println!("  auth status [profile_name]          - Show profile status");
-    println!("  auth list                           - List all profiles");
-    println!("  auth rename <old> <new>             - Rename a profile");
-    println!("  auth logout [profile_name]          - Remove authentication");
-    println!("  auth export [options]               - Export profiles to encrypted file");
-    println!("  auth import [options]               - Import profiles from encrypted file");
-    println!("  auth migrate [--path <file>]        - Move legacy tokens.json into the OS keyring");
-    println!();
-    println!("Login options:");
-    println!("  --client-id <id>                    - OAuth client ID (optional)");
-    println!("  --bot-scopes <scopes>               - Bot scopes (comma-separated or 'all')");
-    println!("  --user-scopes <scopes>              - User scopes (comma-separated or 'all')");
-    println!("  --cloudflared [path]                - Use cloudflared tunnel for redirect URI");
-    println!("                                        (path optional, defaults to 'cloudflared' in PATH)");
-    println!();
-    println!("Manifest-first tunnel login flow:");
-    println!("  When --cloudflared is specified:");
-    println!("    1. A temporary tunnel is created for OAuth callback");
-    println!("    2. A Slack App Manifest is generated and saved to ~/.config/slack-rs/<profile>_manifest.yml");
-    println!("    3. You create the Slack App using the manifest");
-    println!("    4. You enter the Client ID and Client Secret from the new app");
-    println!("    5. The OAuth flow starts automatically");
-    println!();
-    println!("Export options:");
-    println!(
-        "  --profile <name>                    - Export specific profile (default: 'default')"
-    );
-    println!("  --all                               - Export all profiles");
-    println!("  --out <file>                        - Output file path (required)");
-    println!("  --passphrase-env <var>              - Environment variable containing passphrase");
-    println!("  --passphrase-prompt                 - Prompt for passphrase");
-    println!("  --yes                               - Confirm dangerous operation (required)");
-    println!();
-    println!("Import options:");
-    println!("  --in <file>                         - Input file path (required)");
-    println!("  --passphrase-env <var>              - Environment variable containing passphrase");
-    println!("  --passphrase-prompt                 - Prompt for passphrase");
-    println!("  --yes                               - Automatically accept conflicts");
-    println!("  --force                             - Overwrite existing profiles");
-}
-
-fn print_config_usage(prog: &str) {
-    println!("Config command usage:");
-    println!(
-        "  {} config oauth set <profile> --client-id <id> --redirect-uri <uri> --scopes <scopes>",
-        prog
-    );
-    println!("  {} config oauth show <profile>", prog);
-    println!("  {} config oauth delete <profile>", prog);
-    println!(
-        "  {} config set <profile> --token-type <type>  - Set default token type (bot/user)",
-        prog
-    );
-}
-
-fn print_config_oauth_usage(prog: &str) {
-    println!("OAuth config command usage:");
-    println!(
-        "  {} config oauth set <profile> --client-id <id> --redirect-uri <uri> --scopes <scopes> [secret-options]",
-        prog
-    );
-    println!("      Set OAuth configuration for a profile");
-    println!("      Scopes: comma-separated list or 'all' for comprehensive preset");
-    println!();
-    println!("Client secret options (in priority order):");
-    println!("  --client-secret-env <VAR>      Read secret from environment variable");
-    println!("  (SLACKRS_CLIENT_SECRET)        Default environment variable (auto-checked)");
-    println!("  --client-secret-file <PATH>    Read secret from file");
-    println!("  (interactive prompt)           Prompt for secret if stdin is a TTY");
-    println!();
-    println!("  {} config oauth show <profile>", prog);
-    println!("      Show OAuth configuration for a profile");
-    println!();
-    println!("  {} config oauth delete <profile>", prog);
-    println!("      Delete OAuth configuration for a profile");
-    println!();
-    println!("Examples:");
-    println!("  # Interactive prompt (default):");
-    println!("  {} config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes \"chat:write,users:read\"", prog);
-    println!();
-    println!("  # Using environment variable:");
-    println!("  export SLACKRS_CLIENT_SECRET=xoxp-...");
-    println!("  {} config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes \"all\"", prog);
-    println!();
-    println!("  # Using custom environment variable:");
-    println!("  {} config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes \"all\" --client-secret-env MY_SECRET", prog);
-    println!();
-    println!("  # Using file:");
-    println!("  {} config oauth set work --client-id 123.456 --redirect-uri http://127.0.0.1:8765/callback --scopes \"all\" --client-secret-file ~/.secrets/slack", prog);
-    println!();
-    println!("  {} config oauth show work", prog);
-    println!("  {} config oauth delete work", prog);
 }
 
 /// Run config oauth set command
-fn run_config_oauth_set(args: &[String]) -> Result<(), String> {
-    let mut profile_name: Option<String> = None;
-    let mut client_id: Option<String> = None;
-    let mut redirect_uri: Option<String> = None;
-    let mut scopes: Option<String> = None;
-    let mut client_secret_env: Option<String> = None;
-    let mut client_secret_file: Option<String> = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        if args[i].starts_with("--") {
-            match args[i].as_str() {
-                "--client-id" => {
-                    i += 1;
-                    if i < args.len() {
-                        client_id = Some(args[i].clone());
-                    } else {
-                        return Err("--client-id requires a value".to_string());
-                    }
-                }
-                "--redirect-uri" => {
-                    i += 1;
-                    if i < args.len() {
-                        redirect_uri = Some(args[i].clone());
-                    } else {
-                        return Err("--redirect-uri requires a value".to_string());
-                    }
-                }
-                "--scopes" => {
-                    i += 1;
-                    if i < args.len() {
-                        scopes = Some(args[i].clone());
-                    } else {
-                        return Err("--scopes requires a value".to_string());
-                    }
-                }
-                "--client-secret-env" => {
-                    i += 1;
-                    if i < args.len() {
-                        client_secret_env = Some(args[i].clone());
-                    } else {
-                        return Err("--client-secret-env requires a value".to_string());
-                    }
-                }
-                "--client-secret-file" => {
-                    i += 1;
-                    if i < args.len() {
-                        client_secret_file = Some(args[i].clone());
-                    } else {
-                        return Err("--client-secret-file requires a value".to_string());
-                    }
-                }
-                "--client-secret" => {
-                    return Err(
-                        "--client-secret was removed for security (secrets land in shell history).\n\
-                         Provide the secret via:\n\
-                         - Environment variable: SLACKRS_CLIENT_SECRET=<secret>\n\
-                         - Flag: --client-secret-env <ENV_VAR>\n\
-                         - Flag: --client-secret-file <PATH>\n\
-                         - Interactive prompt (run in a terminal)"
-                            .to_string(),
-                    );
-                }
-                _ => {
-                    return Err(format!("Unknown option: {}", args[i]));
-                }
-            }
-        } else if profile_name.is_none() {
-            profile_name = Some(args[i].clone());
-        } else {
-            return Err(format!("Unexpected argument: {}", args[i]));
-        }
-        i += 1;
+fn run_config_oauth_set(args: &slack::cli::args::ConfigOauthSetArgs) -> Result<(), String> {
+    if args.client_secret.is_some() {
+        return Err(
+            "--client-secret was removed for security (secrets land in shell history).\n\
+             Provide the secret via:\n\
+             - Environment variable: SLACKRS_CLIENT_SECRET=<secret>\n\
+             - Flag: --client-secret-env <ENV_VAR>\n\
+             - Flag: --client-secret-file <PATH>\n\
+             - Interactive prompt (run in a terminal)"
+                .to_string(),
+        );
     }
 
-    let profile = profile_name.ok_or_else(|| "Profile name is required".to_string())?;
-    let client = client_id.ok_or_else(|| "--client-id is required".to_string())?;
-    let redirect = redirect_uri.ok_or_else(|| "--redirect-uri is required".to_string())?;
-    let scope_str = scopes.ok_or_else(|| "--scopes is required".to_string())?;
+    let client = args
+        .client_id
+        .clone()
+        .ok_or_else(|| "--client-id is required".to_string())?;
+    let redirect = args
+        .redirect_uri
+        .clone()
+        .ok_or_else(|| "--redirect-uri is required".to_string())?;
+    let scope_str = args
+        .scopes
+        .clone()
+        .ok_or_else(|| "--scopes is required".to_string())?;
 
     commands::oauth_set(commands::OAuthSetParams {
-        profile_name: profile,
+        profile_name: args.profile_name.clone(),
         client_id: client,
         redirect_uri: redirect,
         scopes: scope_str,
-        client_secret_env,
-        client_secret_file,
+        client_secret_env: args.client_secret_env.clone(),
+        client_secret_file: args.client_secret_file.clone(),
     })
     .map_err(|e| e.to_string())
 }
 
-/// Run config oauth show command
-fn run_config_oauth_show(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        return Err("Profile name is required".to_string());
-    }
-
-    let profile_name = args[0].clone();
-    commands::oauth_show(profile_name).map_err(|e| e.to_string())
-}
-
-/// Run config oauth delete command
-fn run_config_oauth_delete(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        return Err("Profile name is required".to_string());
-    }
-
-    let profile_name = args[0].clone();
-    commands::oauth_delete(profile_name).map_err(|e| e.to_string())
-}
-
 /// Run config set command
-fn run_config_set(args: &[String]) -> Result<(), String> {
-    let mut profile_name: Option<String> = None;
-    let mut token_type: Option<profile::TokenType> = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        if args[i].starts_with("--") {
-            match args[i].as_str() {
-                "--token-type" => {
-                    i += 1;
-                    if i < args.len() {
-                        token_type = Some(
-                            args[i]
-                                .parse::<profile::TokenType>()
-                                .map_err(|e| format!("Invalid token type: {}", e))?,
-                        );
-                    } else {
-                        return Err("--token-type requires a value".to_string());
-                    }
-                }
-                _ => {
-                    return Err(format!("Unknown option: {}", args[i]));
-                }
-            }
-        } else if profile_name.is_none() {
-            profile_name = Some(args[i].clone());
-        } else {
-            return Err(format!("Unexpected argument: {}", args[i]));
-        }
-        i += 1;
-    }
-
-    let profile = profile_name.ok_or_else(|| "Profile name is required".to_string())?;
+fn run_config_set(
+    profile_name: &str,
+    token_type: Option<profile::TokenType>,
+) -> Result<(), String> {
     let ttype = token_type.ok_or_else(|| "--token-type is required".to_string())?;
-
-    commands::set_default_token_type(profile, ttype).map_err(|e| e.to_string())
+    commands::set_default_token_type(profile_name.to_string(), ttype).map_err(|e| e.to_string())
 }

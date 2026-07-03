@@ -15,3 +15,4 @@ opencode.jsonc
 
 .review-gauntlet/*
 !.review-gauntlet/checkpoints/
+result

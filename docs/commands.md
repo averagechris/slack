@@ -1,7 +1,8 @@
 # Command Reference
 
-Reference for the `slack` CLI command surface. Verified against the current
-hand-rolled parser (a clap migration is planned; see `docs/roadmap.md`).
+Reference for the `slack` CLI command surface. The CLI is built on clap;
+`slack <command> --help` is authoritative, and `slack completions <shell>`
+generates bash/zsh/fish completions.
 
 ## Global Flags
 

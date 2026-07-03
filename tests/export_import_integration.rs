@@ -807,8 +807,8 @@ fn test_auth_export_help_flag() {
         "Help should contain export description"
     );
     assert!(
-        stdout.contains("USAGE:"),
-        "Help should contain USAGE section"
+        stdout.contains("Usage:"),
+        "Help should contain Usage section"
     );
     assert!(
         stdout.contains("--out <file>"),
@@ -840,8 +840,8 @@ fn test_auth_export_help_long_flag() {
         "Help should contain export description"
     );
     assert!(
-        stdout.contains("USAGE:"),
-        "Help should contain USAGE section"
+        stdout.contains("Usage:"),
+        "Help should contain Usage section"
     );
     assert!(
         stdout.contains("--out <file>"),
@@ -869,8 +869,8 @@ fn test_auth_import_help_flag() {
         "Help should contain import description"
     );
     assert!(
-        stdout.contains("USAGE:"),
-        "Help should contain USAGE section"
+        stdout.contains("Usage:"),
+        "Help should contain Usage section"
     );
     assert!(
         stdout.contains("--in <file>"),
@@ -910,8 +910,8 @@ fn test_auth_import_help_long_flag() {
         "Help should contain import description"
     );
     assert!(
-        stdout.contains("USAGE:"),
-        "Help should contain USAGE section"
+        stdout.contains("Usage:"),
+        "Help should contain Usage section"
     );
     assert!(
         stdout.contains("--in <file>"),
