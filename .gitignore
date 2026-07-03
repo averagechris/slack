@@ -1,4 +1,7 @@
 /target
+.envrc
+.direnv/
+.devenv/
 .tldrignore
 .tldr/
 .cflx.jsonc
