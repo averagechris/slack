@@ -13,6 +13,9 @@ the fork will be v0.2.0.
 
 ## Unreleased
 
+
+## v0.3.0 - 2026-07-03
+
 ### Added
 
 - `msg post --blocks <json|@file>` sends Block Kit blocks with
@@ -40,7 +43,6 @@ the fork will be v0.2.0.
 - The `release` flake app now describes the release commit
   (`chore: release vX.Y.Z`) before tagging when the working-copy commit has
   no description, so `release-tag` no longer tags undescribed commits.
-
 
 ## v0.2.0 - 2026-07-03
 
