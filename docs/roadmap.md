@@ -74,18 +74,18 @@ recorded in AGENTS.md.
 - [ ] Point `origin` at `git.sr.ht/~averagechris/slack`, GitHub as `upstream`
 
 ### Nix packaging & dev environment
-- [ ] `flake.nix` (linear-cli pattern): `buildRustPackage` + `cargoLock`,
+- [x] `flake.nix` (linear-cli pattern): `buildRustPackage` + `cargoLock`,
       metadata from Cargo.toml/config/cli.toml, devShell (cargo-audit, -deny,
       -machete, -nextest, rust-analyzer, alejandra, nixd, jj), alejandra formatter
-- [ ] Flake apps: `ci-fmt`, `ci-clippy`, `ci-test`, `fetch-upstream`
-- [ ] `.envrc` (`use flake`, git-ignored), `.jj-lint.toml` (clippy gate)
+- [x] Flake apps: `ci-fmt`, `ci-clippy`, `ci-test`, `fetch-upstream`
+- [x] `.envrc` (`use flake`, git-ignored), `.jj-lint.toml` (clippy gate)
 - [ ] `nix flake check` green
 
 ### Security hardening
-- [ ] Keyring-only `TokenStore` (macOS Keychain + Linux secret-service);
+- [x] Keyring-only `TokenStore` (macOS Keychain + Linux secret-service);
       delete file persistence + `SLACK_TOKEN` auth; one-time migration
       command from `tokens.json` (then shred it)
-- [ ] Refactor/drop `SLACK_TOKEN` env tests; keep in-memory store for tests
+- [x] Refactor/drop `SLACK_TOKEN` env tests; keep in-memory store for tests
 - [ ] S3: use stored KDF params in `derive_key`
 - [ ] S4/S5: callback server fixes (ignore wrong state, constant-time compare,
       URL decode, no state in errors)

@@ -24,10 +24,9 @@ use crate::profile::{
 };
 use serde_json::Value;
 
-/// Resolve token with priority: SLACK_TOKEN env > token store
+/// Resolve token from the token store
 ///
 /// # Arguments
-/// * `slack_token_env` - Value of SLACK_TOKEN environment variable (None if unset)
 /// * `token_store` - Token store to retrieve tokens from
 /// * `token_key` - Key to use for token store lookup
 /// * `fallback_token_key` - Optional fallback key (e.g., bot token when user token not found)
@@ -38,29 +37,22 @@ use serde_json::Value;
 /// * `Err(message)` - Token resolution failed
 ///
 /// # Token Resolution Priority
-/// 1. SLACK_TOKEN environment variable (if set, bypasses token store)
-/// 2. Token store with primary token_key
-/// 3. Token store with fallback_token_key (only if not explicit_request)
-/// 4. Error if no token found
+/// 1. Token store with primary token_key
+/// 2. Token store with fallback_token_key (only if not explicit_request)
+/// 3. Error if no token found
 #[allow(dead_code)]
 pub fn resolve_token_for_wrapper(
-    slack_token_env: Option<String>,
     token_store: &dyn TokenStore,
     token_key: &str,
     fallback_token_key: Option<&str>,
     explicit_request: bool,
 ) -> Result<String, String> {
-    // Priority 1: SLACK_TOKEN environment variable
-    if let Some(env_token) = slack_token_env {
-        return Ok(env_token);
-    }
-
-    // Priority 2: Token store with primary key
+    // Priority 1: Token store with primary key
     if let Ok(token) = token_store.get(token_key) {
         return Ok(token);
     }
 
-    // Priority 3: Fallback token (only if not explicit_request)
+    // Priority 2: Fallback token (only if not explicit_request)
     if !explicit_request {
         if let Some(fallback_key) = fallback_token_key {
             if let Ok(token) = token_store.get(fallback_key) {
@@ -70,15 +62,21 @@ pub fn resolve_token_for_wrapper(
         }
     }
 
-    // Priority 4: Error
-    if explicit_request {
-        Err(
-            "No token found for explicitly requested token type. Set SLACK_TOKEN environment variable or run 'slack login' to obtain a token.".to_string()
-        )
+    // Priority 3: Error
+    let base = if explicit_request {
+        "No token found for explicitly requested token type. Run 'slack auth login' to obtain a token."
     } else {
-        Err(
-            "No token found. Set SLACK_TOKEN environment variable or run 'slack login' to obtain a token.".to_string()
-        )
+        "No token found. Run 'slack auth login' to obtain a token."
+    };
+    Err(with_legacy_hint(base.to_string()))
+}
+
+/// Append a legacy-tokens.json migration hint to a token error message
+/// when an unmigrated plaintext token file still exists.
+pub(crate) fn with_legacy_hint(message: String) -> String {
+    match crate::profile::legacy_tokens_hint() {
+        Some(hint) => format!("{}\n{}", message, hint),
+        None => message,
     }
 }
 
@@ -89,19 +87,13 @@ pub fn resolve_token_for_wrapper(
 /// * `token_type` - Optional token type (bot/user). If None, uses profile default or bot fallback
 ///
 /// # Token Resolution Priority
-/// 1. SLACK_TOKEN environment variable (if set, bypasses token store)
-/// 2. CLI flag token_type parameter (if provided)
-/// 3. Profile's default_token_type (if set)
-/// 4. Try user token first, fall back to bot token
+/// 1. CLI flag token_type parameter (if provided)
+/// 2. Profile's default_token_type (if set)
+/// 3. Try user token first, fall back to bot token
 pub async fn get_api_client_with_token_type(
     profile_name: Option<String>,
     token_type: Option<TokenType>,
 ) -> Result<ApiClient, String> {
-    // Check for SLACK_TOKEN environment variable first
-    if let Ok(env_token) = std::env::var("SLACK_TOKEN") {
-        return Ok(ApiClient::with_token(env_token));
-    }
-
     let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
     let config_path = default_config_path().map_err(|e| e.to_string())?;
     let config = load_config(&config_path).map_err(|e| e.to_string())?;
@@ -123,13 +115,13 @@ pub async fn get_api_client_with_token_type(
             // Explicitly requested bot token
             token_store
                 .get(&bot_token_key)
-                .map_err(|e| format!("Failed to get bot token: {}", e))?
+                .map_err(|e| with_legacy_hint(format!("Failed to get bot token: {}", e)))?
         }
         Some(TokenType::User) => {
             // Explicitly requested user token
             token_store
                 .get(&user_token_key)
-                .map_err(|e| format!("Failed to get user token: {}", e))?
+                .map_err(|e| with_legacy_hint(format!("Failed to get user token: {}", e)))?
         }
         None => {
             // No explicit preference, try user token first (for APIs that require user scope)
@@ -139,7 +131,7 @@ pub async fn get_api_client_with_token_type(
                     // Fall back to bot token
                     token_store
                         .get(&bot_token_key)
-                        .map_err(|e| format!("Failed to get token: {}", e))?
+                        .map_err(|e| with_legacy_hint(format!("Failed to get token: {}", e)))?
                 }
             }
         }
@@ -221,14 +213,6 @@ pub async fn wrap_with_envelope_and_token_type(
     let token_type_str = if let Some(explicit) = explicit_token_type {
         // If explicitly specified via --token-type, use that
         Some(explicit.to_string())
-    } else if std::env::var("SLACK_TOKEN").is_ok() {
-        // If using SLACK_TOKEN, use profile's default_token_type if set, otherwise "bot"
-        Some(
-            profile
-                .default_token_type
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| "bot".to_string()),
-        )
     } else {
         // Resolve from token store (check which token exists)
         let token_store = create_token_store().map_err(|e| e.to_string())?;
@@ -508,11 +492,7 @@ pub async fn run_conv_list(args: &[String]) -> Result<(), String> {
     let debug_level = debug::get_debug_level(args);
 
     // Log debug information if --debug or --trace flag is present
-    let token_store_backend = if std::env::var("SLACK_TOKEN").is_ok() {
-        "environment"
-    } else {
-        "file"
-    };
+    let token_store_backend = "keyring";
 
     // Resolve actual token type for debug output
     let resolved_token_type = if let Some(explicit) = token_type {
@@ -797,11 +777,7 @@ pub async fn run_conv_history(args: &[String]) -> Result<(), String> {
     let debug_level = debug::get_debug_level(args);
 
     // Log debug information if --debug or --trace flag is present
-    let token_store_backend = if std::env::var("SLACK_TOKEN").is_ok() {
-        "environment"
-    } else {
-        "file"
-    };
+    let token_store_backend = "keyring";
 
     // Resolve actual token type for debug output
     let resolved_token_type = if let Some(explicit) = token_type {
@@ -980,11 +956,7 @@ pub async fn run_thread_get(args: &[String]) -> Result<(), String> {
     let debug_level = debug::get_debug_level(args);
 
     // Log debug information if --debug or --trace flag is present
-    let token_store_backend = if std::env::var("SLACK_TOKEN").is_ok() {
-        "environment"
-    } else {
-        "file"
-    };
+    let token_store_backend = "keyring";
 
     // Resolve actual token type for debug output
     let resolved_token_type = if let Some(explicit) = token_type {
@@ -1047,11 +1019,7 @@ pub async fn run_users_info(args: &[String]) -> Result<(), String> {
     let debug_level = debug::get_debug_level(args);
 
     // Log debug information if --debug or --trace flag is present
-    let token_store_backend = if std::env::var("SLACK_TOKEN").is_ok() {
-        "environment"
-    } else {
-        "file"
-    };
+    let token_store_backend = "keyring";
 
     // Resolve actual token type for debug output
     let resolved_token_type = if let Some(explicit) = token_type {
@@ -2188,28 +2156,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_token_prefers_env() {
-        // SLACK_TOKEN should be preferred over token store
-        let store = MockTokenStore::new().with_token("T123:U123", "xoxb-store-token");
-
-        let result = resolve_token_for_wrapper(
-            Some("xoxb-env-token".to_string()),
-            &store,
-            "T123:U123",
-            None,
-            false,
-        );
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "xoxb-env-token");
-    }
-
-    #[test]
     fn test_resolve_token_uses_store() {
-        // When SLACK_TOKEN is not set, use token store
         let store = MockTokenStore::new().with_token("T123:U123", "xoxb-store-token");
 
-        let result = resolve_token_for_wrapper(None, &store, "T123:U123", None, false);
+        let result = resolve_token_for_wrapper(&store, "T123:U123", None, false);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "xoxb-store-token");
@@ -2221,7 +2171,6 @@ mod tests {
         let store = MockTokenStore::new().with_token("T123:U123", "xoxb-bot-token");
 
         let result = resolve_token_for_wrapper(
-            None,
             &store,
             "T123:U123:user",  // User token key
             Some("T123:U123"), // Bot token fallback
@@ -2238,7 +2187,6 @@ mod tests {
         let store = MockTokenStore::new().with_token("T123:U123", "xoxb-bot-token");
 
         let result = resolve_token_for_wrapper(
-            None,
             &store,
             "T123:U123:user",  // User token key (not found)
             Some("T123:U123"), // Bot token fallback
@@ -2250,22 +2198,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_token_env_overrides_explicit() {
-        // SLACK_TOKEN should override even explicit token type requests
-        let store = MockTokenStore::new()
-            .with_token("T123:U123", "xoxb-bot-token")
-            .with_token("T123:U123:user", "xoxp-user-token");
+    fn test_resolve_token_error_mentions_login() {
+        let store = MockTokenStore::new();
 
-        let result = resolve_token_for_wrapper(
-            Some("xoxb-env-token".to_string()),
-            &store,
-            "T123:U123:user",
-            None,
-            true, // Explicit request
-        );
+        let result = resolve_token_for_wrapper(&store, "T123:U123", None, false);
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "xoxb-env-token");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("slack auth login"));
     }
 
     // Tests for get_option with space-separated format

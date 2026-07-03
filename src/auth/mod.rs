@@ -20,7 +20,7 @@ pub mod manifest;
 
 pub use cloudflared::{CloudflaredError, CloudflaredTunnel};
 pub use commands::{
-    list, login_with_credentials, login_with_credentials_extended, logout, rename, status,
+    list, login_with_credentials, login_with_credentials_extended, logout, migrate, rename, status,
     ExtendedLoginOptions,
 };
 pub use export_import::{

@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::profile::{create_token_store, default_config_path, load_config, make_token_key};
+use crate::profile::{
+    create_token_store, default_config_path, load_config, make_token_key, KEYRING_SERVICE,
+};
 
 /// Diagnostic output structure
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,10 +31,10 @@ pub struct DiagnosticInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenStoreInfo {
-    /// Backend type (e.g., "file", "keyring")
+    /// Backend type ("keyring")
     pub backend: String,
-    /// Resolved storage path
-    pub path: String,
+    /// Storage location description (keyring service name)
+    pub location: String,
 }
 
 /// Token availability status
@@ -63,8 +65,8 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
             let info = DiagnosticInfo {
                 config_path: config_path.display().to_string(),
                 token_store: TokenStoreInfo {
-                    backend: "file".to_string(),
-                    path: get_token_store_path()?,
+                    backend: "keyring".to_string(),
+                    location: token_store_location(),
                 },
                 tokens: TokenStatus {
                     bot_token_exists: false,
@@ -113,16 +115,17 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
     let mut scope_hints = Vec::new();
     if !bot_token_exists && !user_token_exists {
         scope_hints.push("No tokens found. Run 'auth login' to authenticate.".to_string());
+        if let Some(hint) = crate::profile::legacy_tokens_hint() {
+            scope_hints.push(hint);
+        }
     }
-
-    let token_store_path = get_token_store_path()?;
 
     if json_output {
         let info = DiagnosticInfo {
             config_path: config_path.display().to_string(),
             token_store: TokenStoreInfo {
-                backend: "file".to_string(),
-                path: token_store_path,
+                backend: "keyring".to_string(),
+                location: token_store_location(),
             },
             tokens: TokenStatus {
                 bot_token_exists,
@@ -139,8 +142,8 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
         println!("Config Path: {}", config_path.display());
         println!();
         println!("Token Store:");
-        println!("  Backend: file");
-        println!("  Path: {}", token_store_path);
+        println!("  Backend: keyring");
+        println!("  Location: {}", token_store_location());
         println!();
         println!("Token Status:");
         println!(
@@ -172,13 +175,9 @@ pub fn doctor(profile_name: Option<String>, json_output: bool) -> Result<(), Str
     Ok(())
 }
 
-/// Get token store path
-fn get_token_store_path() -> Result<String, String> {
-    use crate::profile::FileTokenStore;
-
-    FileTokenStore::default_path()
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("Failed to get token store path: {}", e))
+/// Describe the token store location (OS keyring service)
+fn token_store_location() -> String {
+    format!("OS keyring service '{}'", KEYRING_SERVICE)
 }
 
 #[cfg(test)]
@@ -190,8 +189,8 @@ mod tests {
         let info = DiagnosticInfo {
             config_path: "/home/user/.config/slack-rs/profiles.json".to_string(),
             token_store: TokenStoreInfo {
-                backend: "file".to_string(),
-                path: "/home/user/.local/share/slack-rs/tokens.json".to_string(),
+                backend: "keyring".to_string(),
+                location: "OS keyring service 'slack'".to_string(),
             },
             tokens: TokenStatus {
                 bot_token_exists: true,
@@ -211,8 +210,8 @@ mod tests {
         let info = DiagnosticInfo {
             config_path: "/home/user/.config/slack-rs/profiles.json".to_string(),
             token_store: TokenStoreInfo {
-                backend: "file".to_string(),
-                path: "/home/user/.local/share/slack-rs/tokens.json".to_string(),
+                backend: "keyring".to_string(),
+                location: "OS keyring service 'slack'".to_string(),
             },
             tokens: TokenStatus {
                 bot_token_exists: false,

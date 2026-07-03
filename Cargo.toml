@@ -38,6 +38,19 @@ rpassword = "7.3"
 regex = "1.11"
 arboard = "3.4"
 
+# OS keyring token storage (R1/D2: keyring-only, no plaintext files).
+# Platform backends: macOS Keychain, Windows Credential Manager, and Linux
+# Secret Service via zbus with pure-Rust crypto (no OpenSSL) so nix builds
+# stay simple.
+[dependencies.keyring]
+version = "3"
+features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+    "crypto-rust",
+]
+
 [dev-dependencies]
 tempfile = "3.14"
 wiremock = "0.6"

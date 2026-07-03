@@ -71,7 +71,7 @@ src/
 ├── debug.rs          # Debug logging with token redaction
 ├── idempotency/      # Idempotency key store for write commands
 ├── oauth/            # OAuth flow (PKCE, callback server, ports, scopes)
-├── profile/          # Profile config + token storage (file-based today)
+├── profile/          # Profile config + keyring token storage
 └── skills/           # Embedded agent skill installer (install-skills)
 
 config/cli.toml       # Single source of truth for the binary name
@@ -80,21 +80,28 @@ tests/                # Integration tests
 docs/                 # roadmap.md (tracker), fork-audit.md (read-only), guides
 ```
 
-## Storage Reality (do not repeat upstream's false docs)
+## Storage Reality
 
-- Tokens and OAuth client secrets are currently stored **file-based** in
-  `tokens.json` (0600) via `FileTokenStore`; profiles in `profiles.json`.
-  There is **no `keyring` dependency** today.
-- Keyring-only storage (macOS Keychain / Linux secret-service) is PLANNED
-  per `docs/roadmap.md` (D2). Until then, never document keyring storage
-  as existing behavior.
+- Tokens and OAuth client secrets live **only in the OS keyring**
+  (`KeyringTokenStore`, service name `slack`, kept in sync with
+  `config/cli.toml`). One entry per profile identity (`{team_id}:{user_id}`,
+  a JSON map holding bot + user tokens) plus one entry per profile for the
+  OAuth client secret (`oauth-client-secret:<profile>`).
+- `profiles.json` holds non-secret metadata only and doubles as the profile
+  index (the keyring cannot enumerate entries).
+- There is no plaintext token file and no `SLACK_TOKEN` env auth. The
+  one-time `slack auth migrate` imports a legacy `tokens.json` and shreds it.
+- Tests must never touch the real keyring: use `InMemoryTokenStore`, or
+  `slack::profile::use_mock_keyring()` (debug-only; process-global, so use
+  `serial_test`). Debug builds also honor `SLACK_KEYRING_MOCK=1` for
+  spawned-binary tests.
 
 ## Failure Modes
 
 | Do not do this | Why / corrected behavior |
 | --- | --- |
 | Reintroduce GitHub Actions, codecov, Homebrew formulae, or crates.io release plumbing | This fork is Nix-native (R2) with no hosted PR CI (D7). Validation is local: `nix flake check` + `ci-*` flake apps once `flake.nix` lands; SourceHut builds for releases only. |
-| Reintroduce env-var token auth (`SLACK_TOKEN`) or plaintext token storage once keyring-only storage lands | R1: secure by default. Encrypted export/import is the migration path between machines. |
+| Reintroduce env-var token auth (`SLACK_TOKEN`) or plaintext token storage | R1: secure by default. Encrypted export/import is the migration path between machines. |
 | Reintroduce the `--client-secret` raw CLI flag | Removed per audit S6 — secrets land in shell history/process lists. Secrets come only from env var (`SLACKRS_CLIENT_SECRET` / `--client-secret-env`), file (`--client-secret-file`), or interactive prompt. |
 | Reintroduce ngrok tunnel support or the `demo` command | Dropped per D4 as dead code. Cloudflared tunnel login stays. |
 | Edit `~/.agents/skills/` or other distributed skill copies | Source of truth is `./skills/` in this repo. Edit `./skills/<name>/SKILL.md` and let installs propagate. |
@@ -139,7 +146,7 @@ docs/                 # roadmap.md (tracker), fork-audit.md (read-only), guides
 ## Dependencies
 
 **Core:** `tokio` (full), `reqwest` (json, rustls-tls), `serde`/`serde_json`/`serde_yaml`
-**Security:** `aes-gcm`, `argon2`, `sha2`, `base64`, `rand` (encrypted export/import)
+**Security:** `keyring` (OS credential stores; pure-Rust secret-service crypto), `aes-gcm`, `argon2`, `sha2`, `base64`, `rand` (encrypted export/import)
 **CLI:** `rpassword`, `directories`, `arboard`, `regex`, `url`, `thiserror`
 **Testing:** `tempfile`, `wiremock`, `httpmock`, `serial_test`
 

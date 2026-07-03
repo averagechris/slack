@@ -726,15 +726,11 @@ pub fn status(profile_name: Option<String>) -> Result<(), String> {
         println!("Client ID: {}", client_id);
     }
 
-    // Display SLACK_TOKEN environment variable status (without showing value)
-    if std::env::var("SLACK_TOKEN").is_ok() {
-        println!("SLACK_TOKEN: set");
-    }
-
-    // Display token store backend and storage location
-    use crate::profile::FileTokenStore;
-    let file_path = FileTokenStore::default_path().map_err(|e| e.to_string())?;
-    println!("Token Store: file ({})", file_path.display());
+    // Display token store backend (OS keyring; one entry per profile identity)
+    println!(
+        "Token Store: OS keyring (service '{}')",
+        crate::profile::KEYRING_SERVICE
+    );
 
     // Check if tokens exist
     let token_store = create_token_store().map_err(|e| e.to_string())?;
@@ -972,6 +968,47 @@ pub fn logout(profile_name: Option<String>) -> Result<(), String> {
     save_config(&config_path, &config).map_err(|e| e.to_string())?;
 
     println!("Profile '{}' removed", profile_name);
+
+    Ok(())
+}
+
+/// Migrate command - one-time import of a legacy plaintext `tokens.json`
+/// into the OS keyring, then secure deletion of the file.
+///
+/// # Arguments
+/// * `path_override` - Optional path to the legacy tokens file (defaults to
+///   the pre-keyring location, `~/.local/share/slack-rs/tokens.json`)
+pub fn migrate(path_override: Option<String>) -> Result<(), String> {
+    use crate::profile::{legacy_tokens_path, migrate_legacy_tokens};
+
+    let path = match path_override {
+        Some(p) => std::path::PathBuf::from(p),
+        None => legacy_tokens_path().map_err(|e| e.to_string())?,
+    };
+
+    if !path.exists() {
+        return Err(format!(
+            "No legacy tokens file found at {}. Nothing to migrate.",
+            path.display()
+        ));
+    }
+
+    let token_store = create_token_store().map_err(|e| e.to_string())?;
+    let summary = migrate_legacy_tokens(&*token_store, &path).map_err(|e| e.to_string())?;
+
+    println!("✓ Migration complete");
+    println!(
+        "  Imported {} secret(s) into the OS keyring (service '{}'):",
+        summary.imported,
+        crate::profile::KEYRING_SERVICE
+    );
+    for key in &summary.keys {
+        println!("    - {}", key);
+    }
+    println!(
+        "  Deleted legacy plaintext file: {}",
+        summary.source.display()
+    );
 
     Ok(())
 }
@@ -1381,11 +1418,10 @@ mod tests {
         let user_id = "U456";
         let profile_name = "test";
 
-        // Use a temporary token store file with file backend
-        let tokens_path = temp_dir.path().join("tokens.json");
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
+        // Keep tests off the real OS credential store
+        crate::profile::use_mock_keyring();
 
-        // Save profile with client_id and client_secret to file store
+        // Save profile with client_id and client_secret to keyring store
         let scopes = vec!["chat:write".to_string(), "users:read".to_string()];
         let bot_scopes = vec!["chat:write".to_string()];
         let user_scopes = vec!["users:read".to_string()];
@@ -1413,9 +1449,8 @@ mod tests {
         assert_eq!(profile.team_id, team_id);
         assert_eq!(profile.user_id, user_id);
 
-        // Verify tokens were saved to token store (file mode for this test)
-        use crate::profile::FileTokenStore;
-        let token_store = FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        // Verify tokens were saved to the (mock) keyring token store
+        let token_store = create_token_store().unwrap();
         let bot_token_key = make_token_key(team_id, user_id);
         let user_token_key = format!("{}:{}:user", team_id, user_id);
         let client_secret_key = format!("oauth-client-secret:{}", profile_name);
@@ -1424,8 +1459,10 @@ mod tests {
         assert!(token_store.exists(&user_token_key));
         assert!(token_store.exists(&client_secret_key));
 
-        // Clean up environment variables
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
+        // Clean up mock keyring state
+        token_store.delete(&bot_token_key).ok();
+        token_store.delete(&user_token_key).ok();
+        token_store.delete(&client_secret_key).ok();
     }
 
     #[test]
@@ -1435,8 +1472,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
-        let tokens_path = temp_dir.path().join("tokens.json");
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
+        crate::profile::use_mock_keyring();
 
         let team_id = "T123";
         let user_id = "U456";
@@ -1470,8 +1506,6 @@ mod tests {
             profile.default_token_type,
             Some(crate::profile::TokenType::User)
         );
-
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
     }
 
     #[test]
@@ -1481,8 +1515,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
-        let tokens_path = temp_dir.path().join("tokens.json");
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
+        crate::profile::use_mock_keyring();
 
         let team_id = "T123";
         let user_id = "U456";
@@ -1516,8 +1549,6 @@ mod tests {
             profile.default_token_type,
             Some(crate::profile::TokenType::Bot)
         );
-
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
     }
 
     #[test]
@@ -1527,8 +1558,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
-        let tokens_path = temp_dir.path().join("tokens.json");
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
+        crate::profile::use_mock_keyring();
 
         let team_id = "T123";
         let user_id = "U456";
@@ -1582,8 +1612,6 @@ mod tests {
             Some(crate::profile::TokenType::Bot),
             "Existing default_token_type should be preserved"
         );
-
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
     }
 
     #[test]
@@ -1652,81 +1680,14 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn test_status_shows_token_store_backend_file() {
+    fn test_migrate_missing_file_errors() {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("profiles.json");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
-        // Set up file backend
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
-
-        // Create a test profile
-        let mut config = ProfilesConfig::new();
-        config.set(
-            "test".to_string(),
-            Profile {
-                team_id: "T123".to_string(),
-                user_id: "U456".to_string(),
-                team_name: Some("Test Team".to_string()),
-                user_name: None,
-                client_id: None,
-                redirect_uri: None,
-                scopes: None,
-                bot_scopes: None,
-                user_scopes: None,
-                default_token_type: None,
-            },
-        );
-        save_config(&config_path, &config).unwrap();
-
-        // Note: We can't easily capture stdout in tests, but we verify the function doesn't panic
-        // The actual output verification would require integration tests
-        std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
-
-        // This test verifies that status() doesn't panic with file backend
-        // The actual output contains "Token Store: file" but we can't easily verify stdout here
-
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
-        std::env::remove_var("SLACK_RS_CONFIG_PATH");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_status_shows_slack_token_env_when_set() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("profiles.json");
-
-        // Create a test profile
-        let mut config = ProfilesConfig::new();
-        config.set(
-            "test".to_string(),
-            Profile {
-                team_id: "T123".to_string(),
-                user_id: "U456".to_string(),
-                team_name: Some("Test Team".to_string()),
-                user_name: None,
-                client_id: None,
-                redirect_uri: None,
-                scopes: None,
-                bot_scopes: None,
-                user_scopes: None,
-                default_token_type: None,
-            },
-        );
-        save_config(&config_path, &config).unwrap();
-
-        // Set SLACK_TOKEN
-        std::env::set_var("SLACK_TOKEN", "xoxb-secret-token");
-
-        // status() should show "SLACK_TOKEN: set" without revealing the value
-        // Note: We can't easily capture stdout in unit tests, but we verify no panic
-
-        std::env::remove_var("SLACK_TOKEN");
+        let missing = temp_dir.path().join("tokens.json");
+        let result = migrate(Some(missing.to_string_lossy().to_string()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Nothing to migrate"));
     }
 
     // Tests for compute_default_token_type_display
@@ -1818,57 +1779,5 @@ mod tests {
             false, // No user token
         );
         assert_eq!(result, crate::profile::TokenType::User);
-    }
-
-    /// Test that FileTokenStore::default_path() respects XDG_DATA_HOME
-    /// This verifies the path resolution that auth status displays
-    #[test]
-    #[serial_test::serial]
-    fn test_file_token_store_respects_xdg_data_home() {
-        use crate::profile::FileTokenStore;
-        use tempfile::TempDir;
-
-        // Clear SLACK_RS_TOKENS_PATH to test XDG_DATA_HOME
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
-
-        let temp_dir = TempDir::new().unwrap();
-        let xdg_data_home = temp_dir.path().to_str().unwrap();
-        std::env::set_var("XDG_DATA_HOME", xdg_data_home);
-
-        let path = FileTokenStore::default_path().unwrap();
-        let expected = temp_dir.path().join("slack-rs").join("tokens.json");
-
-        assert_eq!(
-            path, expected,
-            "auth status should display XDG_DATA_HOME-based path when XDG_DATA_HOME is set"
-        );
-
-        std::env::remove_var("XDG_DATA_HOME");
-    }
-
-    /// Test that SLACK_RS_TOKENS_PATH takes priority over XDG_DATA_HOME in auth status
-    #[test]
-    #[serial_test::serial]
-    fn test_file_token_store_slack_rs_tokens_path_priority() {
-        use crate::profile::FileTokenStore;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let custom_path = temp_dir.path().join("custom-tokens.json");
-        let xdg_data_home = temp_dir.path().join("xdg-data");
-
-        // Set both environment variables
-        std::env::set_var("SLACK_RS_TOKENS_PATH", custom_path.to_str().unwrap());
-        std::env::set_var("XDG_DATA_HOME", xdg_data_home.to_str().unwrap());
-
-        let path = FileTokenStore::default_path().unwrap();
-
-        assert_eq!(
-            path, custom_path,
-            "auth status should display SLACK_RS_TOKENS_PATH when both env vars are set"
-        );
-
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
-        std::env::remove_var("XDG_DATA_HOME");
     }
 }

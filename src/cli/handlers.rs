@@ -251,10 +251,9 @@ struct ResolvedToken {
 ///
 /// This function encapsulates the token resolution logic:
 /// 1. Determines token type: CLI flag > profile default > inferred (user if exists, else bot)
-/// 2. Attempts to retrieve token from token store
-/// 3. Falls back to SLACK_TOKEN environment variable if store retrieval fails
-/// 4. If explicit token type was requested and not found, returns error
-/// 5. If no explicit preference, falls back from user to bot token
+/// 2. Attempts to retrieve token from the token store
+/// 3. If explicit token type was requested and not found, returns error
+/// 4. If no explicit preference, falls back from user to bot token
 ///
 /// # Arguments
 /// * `token_store` - Token store to retrieve tokens from
@@ -296,45 +295,40 @@ fn resolve_token(
     // If either is set, we should NOT fallback to a different token type
     let explicit_request = cli_token_type.is_some() || profile_default_token_type.is_some();
 
-    // PRIORITY 1: Check SLACK_TOKEN environment variable first (highest priority)
-    let token = if let Ok(env_token) = std::env::var("SLACK_TOKEN") {
-        env_token
-    } else {
-        // PRIORITY 2: Try to retrieve token from token store
-        match token_store.get(&token_key) {
-            Ok(t) => t,
-            Err(_) => {
-                // PRIORITY 3: If token not found in store, apply fallback logic
-                if explicit_request {
-                    // If token type was explicitly requested, fail without fallback
-                    return Err(format!(
-                        "No {} token found for profile '{}' ({}:{}). Explicitly requested token type not available. Set SLACK_TOKEN environment variable or run 'slack login' to obtain a {} token.",
-                        resolved_token_type, profile_name, team_id, user_id, resolved_token_type
-                    ));
-                } else {
-                    // If no token type preference was specified, try bot token as fallback
-                    if resolved_token_type == TokenType::User {
-                        if let Ok(bot_token) = token_store.get(&token_key_bot) {
-                            eprintln!(
-                                "Warning: User token not found, falling back to bot token for profile '{}'",
-                                profile_name
-                            );
-                            return Ok(ResolvedToken {
-                                token: bot_token,
-                                token_type: TokenType::Bot,
-                            });
-                        } else {
-                            return Err(format!(
-                                "No {} token found for profile '{}' ({}:{}). Set SLACK_TOKEN environment variable or run 'slack login' to obtain a token.",
-                                resolved_token_type, profile_name, team_id, user_id
-                            ));
-                        }
+    // Retrieve token from the token store
+    let token = match token_store.get(&token_key) {
+        Ok(t) => t,
+        Err(_) => {
+            // If token not found in store, apply fallback logic
+            if explicit_request {
+                // If token type was explicitly requested, fail without fallback
+                return Err(crate::cli::with_legacy_hint(format!(
+                    "No {} token found for profile '{}' ({}:{}). Explicitly requested token type not available. Run 'slack auth login' to obtain a {} token.",
+                    resolved_token_type, profile_name, team_id, user_id, resolved_token_type
+                )));
+            } else {
+                // If no token type preference was specified, try bot token as fallback
+                if resolved_token_type == TokenType::User {
+                    if let Ok(bot_token) = token_store.get(&token_key_bot) {
+                        eprintln!(
+                            "Warning: User token not found, falling back to bot token for profile '{}'",
+                            profile_name
+                        );
+                        return Ok(ResolvedToken {
+                            token: bot_token,
+                            token_type: TokenType::Bot,
+                        });
                     } else {
-                        return Err(format!(
-                            "No {} token found for profile '{}' ({}:{}). Set SLACK_TOKEN environment variable or run 'slack login' to obtain a token.",
+                        return Err(crate::cli::with_legacy_hint(format!(
+                            "No {} token found for profile '{}' ({}:{}). Run 'slack auth login' to obtain a token.",
                             resolved_token_type, profile_name, team_id, user_id
-                        ));
+                        )));
                     }
+                } else {
+                    return Err(crate::cli::with_legacy_hint(format!(
+                        "No {} token found for profile '{}' ({}:{}). Run 'slack auth login' to obtain a token.",
+                        resolved_token_type, profile_name, team_id, user_id
+                    )));
                 }
             }
         }
@@ -390,11 +384,7 @@ pub async fn run_api_call(args: Vec<String>) -> Result<(), Box<dyn std::error::E
     let debug_level = debug::get_debug_level(&args);
 
     // Log debug information if --debug or --trace flag is present
-    let token_store_backend = if std::env::var("SLACK_TOKEN").is_ok() {
-        "environment"
-    } else {
-        "file"
-    };
+    let token_store_backend = "keyring";
 
     let endpoint = format!("https://slack.com/api/{}", api_args.method);
 
@@ -1188,9 +1178,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_with_bot_token_in_store() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1212,9 +1199,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_with_user_token_in_store() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1237,33 +1221,23 @@ mod tests {
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_token_with_slack_token_env() {
+    fn test_resolve_token_fails_with_empty_store() {
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
 
-        // Set SLACK_TOKEN environment variable
-        std::env::set_var("SLACK_TOKEN", "xoxb-env-token");
-
         // Resolve token with no tokens in store
         let result = resolve_token(&token_store, team_id, user_id, None, None, "default");
 
-        std::env::remove_var("SLACK_TOKEN");
-
-        assert!(result.is_ok());
-        let resolved = result.unwrap();
-        assert_eq!(resolved.token, "xoxb-env-token");
-        // Token type should be Bot (inferred default when no tokens exist)
-        assert_eq!(resolved.token_type, TokenType::Bot);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("No bot token found"));
+        assert!(error_msg.contains("slack auth login"));
     }
 
     #[test]
     #[serial]
     fn test_resolve_token_explicit_bot_request_fails_without_bot_token() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1295,9 +1269,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_explicit_user_request_fails_without_user_token() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1326,9 +1297,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_fallback_from_user_to_bot() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1350,7 +1318,7 @@ mod tests {
         // inferred_default will be Bot. The fallback case only triggers when:
         // - resolved_token_type == TokenType::User
         // - explicit_request == false
-        // - user token not in store and SLACK_TOKEN not set
+        // - user token not in store
 
         // For this to happen, we'd need profile.default_token_type to be User but no user token
         // Let me create that scenario:
@@ -1371,9 +1339,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_no_fallback_when_profile_default_set() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1402,9 +1367,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_resolve_token_cli_overrides_profile_default() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";
@@ -1438,37 +1400,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_resolve_token_slack_token_prioritized_over_store() {
-        let token_store = InMemoryTokenStore::new();
-        let team_id = "T123";
-        let user_id = "U456";
-
-        // Set a bot token in store
-        token_store
-            .set(&format!("{}:{}", team_id, user_id), "xoxb-store-token")
-            .unwrap();
-
-        // Set SLACK_TOKEN environment variable
-        std::env::set_var("SLACK_TOKEN", "xoxb-env-token");
-
-        let result = resolve_token(&token_store, team_id, user_id, None, None, "default");
-
-        // Clean up environment variable
-        std::env::remove_var("SLACK_TOKEN");
-
-        assert!(result.is_ok());
-        let resolved = result.unwrap();
-        // Should use env token (SLACK_TOKEN), NOT store token
-        assert_eq!(resolved.token, "xoxb-env-token");
-        assert_eq!(resolved.token_type, TokenType::Bot);
-    }
-
-    #[test]
-    #[serial]
     fn test_resolve_token_with_both_tokens_prefers_user() {
-        // Ensure no SLACK_TOKEN env var is set (cleanup from other tests)
-        std::env::remove_var("SLACK_TOKEN");
-
         let token_store = InMemoryTokenStore::new();
         let team_id = "T123";
         let user_id = "U456";

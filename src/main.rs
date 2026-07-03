@@ -301,6 +301,12 @@ async fn handle_auth_command(args: &[String], ctx: &cli::CliContext) {
         "import" => {
             cli::handle_import_command(&args[3..]).await;
         }
+        "migrate" => {
+            let path = cli::get_option(&args[3..], "--path=");
+            if let Err(e) = auth::migrate(path) {
+                handle_command_error(&e.to_string(), "Migrate command failed");
+            }
+        }
         _ => {
             print_auth_usage();
         }
@@ -544,6 +550,7 @@ fn print_help() {
     println!("    auth list                        List all profiles");
     println!("    auth rename <old> <new>          Rename a profile");
     println!("    auth logout [profile_name]       Remove authentication");
+    println!("    auth migrate [--path <file>]     Move legacy tokens.json into the OS keyring");
     println!("    config oauth set <profile>       Set OAuth configuration for a profile");
     println!("    config oauth show <profile>      Show OAuth configuration for a profile");
     println!("    config oauth delete <profile>    Delete OAuth configuration for a profile");
@@ -592,7 +599,6 @@ fn print_help() {
     println!("    SLACKRS_OUTPUT=raw|envelope    Set default output format (default: envelope)");
     println!("    SLACKCLI_ALLOW_WRITE=true|false  Control write operations (default: true)");
     println!("    SLACK_PROFILE=<name>           Select profile (default: default)");
-    println!("    SLACK_TOKEN=<token>            Override token from store");
     println!();
     println!("EXAMPLES:");
     println!("    # Profile selection");
@@ -619,6 +625,7 @@ fn print_usage() {
     println!("  auth logout [profile_name]     - Remove authentication");
     println!("  auth export [options]          - Export profiles to encrypted file");
     println!("  auth import [options]          - Import profiles from encrypted file");
+    println!("  auth migrate [--path <file>]   - Move legacy tokens.json into the OS keyring");
     println!("  config oauth set <profile>     - Set OAuth configuration for a profile");
     println!("  config oauth show <profile>    - Show OAuth configuration for a profile");
     println!("  config oauth delete <profile>  - Delete OAuth configuration for a profile");
@@ -687,6 +694,7 @@ fn print_auth_usage() {
     println!("  auth logout [profile_name]          - Remove authentication");
     println!("  auth export [options]               - Export profiles to encrypted file");
     println!("  auth import [options]               - Import profiles from encrypted file");
+    println!("  auth migrate [--path <file>]        - Move legacy tokens.json into the OS keyring");
     println!();
     println!("Login options:");
     println!("  --client-id <id>                    - OAuth client ID (optional)");

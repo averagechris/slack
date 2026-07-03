@@ -5,19 +5,18 @@ use tempfile::TempDir;
 
 /// Helper to set up a test environment with profile and tokens
 fn setup_test_env() -> (TempDir, String) {
+    // Keep tests off the real OS credential store
+    slack::profile::use_mock_keyring();
+
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("config");
-    let token_dir = temp_dir.path().join("tokens");
 
     fs::create_dir_all(&config_dir).unwrap();
-    fs::create_dir_all(&token_dir).unwrap();
 
     // Set environment variables to use temp directories
     let config_path = config_dir.join("profiles.json");
-    let token_path = token_dir.join("tokens.json");
 
     env::set_var("XDG_CONFIG_HOME", config_dir.to_str().unwrap());
-    env::set_var("SLACK_RS_TOKENS_PATH", token_path.to_str().unwrap());
 
     // Create a test profile
     let mut config = ProfilesConfig::new();
@@ -53,6 +52,7 @@ fn setup_test_env() -> (TempDir, String) {
 }
 
 #[test]
+#[serial_test::serial]
 fn test_doctor_output_does_not_contain_token_values() {
     let (_temp_dir, _config_path) = setup_test_env();
 
@@ -60,8 +60,8 @@ fn test_doctor_output_does_not_contain_token_values() {
     let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/test/path".to_string(),
         token_store: slack::commands::doctor::TokenStoreInfo {
-            backend: "file".to_string(),
-            path: "/test/tokens.json".to_string(),
+            backend: "keyring".to_string(),
+            location: "OS keyring service 'slack'".to_string(),
         },
         tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
@@ -91,8 +91,8 @@ fn test_doctor_json_output_schema() {
     let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/home/user/.config/slack-rs/profiles.json".to_string(),
         token_store: slack::commands::doctor::TokenStoreInfo {
-            backend: "file".to_string(),
-            path: "/home/user/.local/share/slack-rs/tokens.json".to_string(),
+            backend: "keyring".to_string(),
+            location: "OS keyring service 'slack'".to_string(),
         },
         tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
@@ -112,7 +112,7 @@ fn test_doctor_json_output_schema() {
     // Verify tokenStore structure (camelCase)
     let token_store = parsed.get("tokenStore").unwrap();
     assert!(token_store.get("backend").is_some());
-    assert!(token_store.get("path").is_some());
+    assert!(token_store.get("location").is_some());
 
     // Verify tokens structure (camelCase)
     let tokens = parsed.get("tokens").unwrap();
@@ -128,8 +128,8 @@ fn test_doctor_json_output_omits_empty_scope_hints() {
     let info = slack::commands::doctor::DiagnosticInfo {
         config_path: "/test/path".to_string(),
         token_store: slack::commands::doctor::TokenStoreInfo {
-            backend: "file".to_string(),
-            path: "/test/tokens.json".to_string(),
+            backend: "keyring".to_string(),
+            location: "OS keyring service 'slack'".to_string(),
         },
         tokens: slack::commands::doctor::TokenStatus {
             bot_token_exists: true,
@@ -171,8 +171,8 @@ fn test_diagnostic_info_deserialization() {
     let json = r#"{
         "configPath": "/test/profiles.json",
         "tokenStore": {
-            "backend": "file",
-            "path": "/test/tokens.json"
+            "backend": "keyring",
+            "location": "OS keyring service 'slack'"
         },
         "tokens": {
             "botTokenExists": true,
@@ -184,8 +184,8 @@ fn test_diagnostic_info_deserialization() {
     let info: slack::commands::doctor::DiagnosticInfo = serde_json::from_str(json).unwrap();
 
     assert_eq!(info.config_path, "/test/profiles.json");
-    assert_eq!(info.token_store.backend, "file");
-    assert_eq!(info.token_store.path, "/test/tokens.json");
+    assert_eq!(info.token_store.backend, "keyring");
+    assert_eq!(info.token_store.location, "OS keyring service 'slack'");
     assert!(info.tokens.bot_token_exists);
     assert!(!info.tokens.user_token_exists);
     assert_eq!(info.scope_hints.len(), 2);

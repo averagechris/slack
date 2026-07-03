@@ -178,10 +178,6 @@ slack api call auth.test
 
 # Solution: Login first
 slack auth login
-
-# Or set token via environment
-export SLACK_TOKEN=xoxb-your-token
-slack api call auth.test
 ```
 
 #### Token Type Mismatch

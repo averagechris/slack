@@ -641,10 +641,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let import_path = temp_dir.path().join("import.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
-        // Set SLACK_RS_TOKENS_PATH for file-based token store
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
 
         // Create existing profile
         let mut config = ProfilesConfig::new();
@@ -700,7 +696,7 @@ mod tests {
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Test dry-run import
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
         let options = ImportOptions {
             input_path: import_path.to_str().unwrap().to_string(),
             passphrase: passphrase.to_string(),
@@ -731,7 +727,6 @@ mod tests {
         assert!(!token_store.exists(&token_key));
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
@@ -749,10 +744,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let export_path = temp_dir.path().join("export.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
-        // Set SLACK_RS_TOKENS_PATH for file-based token store
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Create multiple profiles
@@ -790,7 +781,7 @@ mod tests {
         save_config(&config_path, &config).unwrap();
 
         // Set up token store with only one token (profile1)
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
         let token_key1 = make_token_key("T123", "U456");
         token_store.set(&token_key1, "xoxb-token-1").unwrap();
         // Note: No token for profile2
@@ -815,7 +806,6 @@ mod tests {
         assert!(export_path.exists());
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
@@ -827,10 +817,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let export_path = temp_dir.path().join("export.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
-        // Set SLACK_RS_TOKENS_PATH for file-based token store
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Create multiple profiles
@@ -868,7 +854,7 @@ mod tests {
         save_config(&config_path, &config).unwrap();
 
         // Set up token store with NO tokens
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
 
         // Export with --all
         let options = ExportOptions {
@@ -886,7 +872,6 @@ mod tests {
         assert!(matches!(result.unwrap_err(), ExportImportError::NoProfiles));
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
@@ -898,10 +883,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let export_path = temp_dir.path().join("export.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
-        // Set SLACK_RS_TOKENS_PATH for file-based token store
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Create a profile
@@ -924,7 +905,7 @@ mod tests {
         save_config(&config_path, &config).unwrap();
 
         // Set up token store with NO token
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
 
         // Export single profile (not --all)
         let options = ExportOptions {
@@ -947,7 +928,6 @@ mod tests {
         }
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
@@ -959,10 +939,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let export_path = temp_dir.path().join("export.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
         // Set environment variables
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Create a profile
@@ -985,7 +962,7 @@ mod tests {
         save_config(&config_path, &config).unwrap();
 
         // Set up token store with both bot and user tokens
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
         let bot_token_key = make_token_key("T123", "U456");
         let user_token_key = "T123:U456:user".to_string();
         token_store.set(&bot_token_key, "xoxb-bot-token").unwrap();
@@ -1027,7 +1004,6 @@ mod tests {
         assert_eq!(user_token, "xoxp-user-token");
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 
@@ -1039,10 +1015,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
         let export_path = temp_dir.path().join("export.dat");
-        let tokens_path = temp_dir.path().join("tokens.json");
-
         // Set environment variables
-        std::env::set_var("SLACK_RS_TOKENS_PATH", tokens_path.to_str().unwrap());
         std::env::set_var("SLACK_RS_CONFIG_PATH", config_path.to_str().unwrap());
 
         // Create a profile
@@ -1065,7 +1038,7 @@ mod tests {
         save_config(&config_path, &config).unwrap();
 
         // Set up token store with only user token (no bot token)
-        let token_store = crate::profile::FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        let token_store = crate::profile::InMemoryTokenStore::new();
         let user_token_key = "T123:U456:user".to_string();
         token_store.set(&user_token_key, "xoxp-user-token").unwrap();
 
@@ -1101,7 +1074,6 @@ mod tests {
         assert_eq!(user_token, "xoxp-user-token");
 
         // Clean up
-        std::env::remove_var("SLACK_RS_TOKENS_PATH");
         std::env::remove_var("SLACK_RS_CONFIG_PATH");
     }
 }

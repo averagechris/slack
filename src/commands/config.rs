@@ -529,25 +529,25 @@ mod tests {
             .contains("Failed to read file"));
     }
 
-    /// Test that oauth_set saves client secret to file backend
+    /// Test that oauth_set saves client secret to the token store
     #[test]
     #[serial_test::serial]
-    fn test_oauth_set_saves_to_file_backend() {
-        use crate::profile::{get_oauth_client_secret, FileTokenStore};
+    fn test_oauth_set_saves_to_token_store() {
+        use crate::profile::get_oauth_client_secret;
+        use crate::profile::TokenStore;
         use std::env;
         use std::fs;
         use tempfile::TempDir;
 
-        // Create temporary directory for config and tokens
+        // Create temporary directory for config
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("profiles.json");
-        let tokens_path = temp_dir.path().join("tokens.json");
 
         // Set up environment
         env::set_var("SLACKRS_CLIENT_SECRET", "test-secret-12345");
 
-        // Create a file token store
-        let token_store = FileTokenStore::with_path(tokens_path.clone()).unwrap();
+        // Use an in-memory token store (same TokenStore trait as the keyring)
+        let token_store = crate::profile::InMemoryTokenStore::new();
 
         // Call oauth_set with environment variable
         let profile_name = "test-profile".to_string();
@@ -570,10 +570,8 @@ mod tests {
         let retrieved_secret = get_oauth_client_secret(&token_store, &profile_name).unwrap();
         assert_eq!(retrieved_secret, "test-secret-12345");
 
-        // Verify the tokens.json file exists and contains the key
-        assert!(tokens_path.exists());
-        let tokens_content = fs::read_to_string(&tokens_path).unwrap();
-        assert!(tokens_content.contains("oauth-client-secret:test-profile"));
+        // Verify the secret lives under the expected token store key
+        assert!(token_store.exists("oauth-client-secret:test-profile"));
 
         // Verify the secret is NOT stored in the config file (profiles.json)
         // Since we didn't actually call oauth_set, we just verify that the design

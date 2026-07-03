@@ -51,6 +51,7 @@ slack auth export [--profile <name> | --all] --out <file>
                   (--passphrase-env <VAR> | --passphrase-prompt) --yes
 slack auth import --in <file> (--passphrase-env <VAR> | --passphrase-prompt)
                   [--yes] [--force] [--dry-run] [--json]
+slack auth migrate [--path <file>]
 ```
 
 - `--cloudflared` uses the manifest-first tunnel login flow: a temporary
@@ -58,6 +59,8 @@ slack auth import --in <file> (--passphrase-env <VAR> | --passphrase-prompt)
   and credentials are collected after you create the Slack App.
 - Scopes are comma-separated, or `all` for the comprehensive preset.
 - Export/import files are encrypted (AES-256-GCM + Argon2id).
+- `auth migrate` is a one-time command that imports a legacy plaintext
+  `tokens.json` into the OS keyring, then securely deletes the file.
 
 ### `config` — Profile OAuth Configuration
 
@@ -155,8 +158,8 @@ slack file download [<file_id>] [--url=URL] [--out=PATH]
 slack doctor [--profile=NAME] [--json]
 ```
 
-Shows profile config path, token store backend/path, token availability,
-and scope hints.
+Shows profile config path, token store backend (OS keyring), token
+availability, and scope hints.
 
 ### `install-skills` — Agent Skills
 

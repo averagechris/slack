@@ -202,9 +202,14 @@ slack auth import --all --in <file> --passphrase-prompt
 
 | Credential | Storage | Location |
 |-----------|---------|----------|
-| Access Token | File-based | `~/.config/slack-rs/tokens.json` (0600) |
-| Client ID | Plain JSON | `~/.config/slack-rs/profiles.json` |
-| Client Secret | File-based | `~/.config/slack-rs/tokens.json` (0600) |
+| Access Token | OS keyring | Keyring service `slack`, one entry per profile identity |
+| Client ID | Plain JSON | `profiles.json` (non-secret metadata) |
+| Client Secret | OS keyring | Keyring service `slack`, entry `oauth-client-secret:<profile>` |
+
+Backends: macOS Keychain, Windows Credential Manager, Linux Secret Service
+(gnome-keyring/KWallet). There is no plaintext token file; a legacy
+`tokens.json` can be imported once with `slack auth migrate` (the file is
+securely deleted afterwards).
 
 - Client IDs are not considered sensitive (OAuth 2.0 spec)
 - Access tokens and secrets are never logged or printed

@@ -248,6 +248,35 @@ pub fn get_command_definitions() -> Vec<CommandDef> {
                 },
             ],
         },
+        // auth migrate
+        CommandDef {
+            name: "auth migrate".to_string(),
+            description: "Move legacy plaintext tokens.json into the OS keyring, then delete it"
+                .to_string(),
+            usage: "slack auth migrate [--path <file>]".to_string(),
+            flags: vec![FlagDef {
+                name: "--path".to_string(),
+                flag_type: "string".to_string(),
+                required: false,
+                description: "Path to the legacy tokens.json (defaults to the pre-keyring location)"
+                    .to_string(),
+                default: None,
+            }],
+            examples: vec![ExampleDef {
+                description: "Migrate legacy tokens into the keyring".to_string(),
+                command: "slack auth migrate".to_string(),
+            }],
+            exit_codes: vec![
+                ExitCodeDef {
+                    code: 0,
+                    description: "Success".to_string(),
+                },
+                ExitCodeDef {
+                    code: 1,
+                    description: "Command failed".to_string(),
+                },
+            ],
+        },
         // conv list
         CommandDef {
             name: "conv list".to_string(),

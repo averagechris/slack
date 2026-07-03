@@ -20,10 +20,13 @@ pub mod types;
 // Re-export commonly used types and functions
 pub use resolver::{list_profiles, resolve_profile, resolve_profile_full, ResolverError};
 pub use storage::{default_config_path, load_config, save_config, StorageError};
+#[cfg(debug_assertions)]
+pub use token_store::use_mock_keyring;
 pub use token_store::{
-    create_token_store, delete_oauth_client_secret, get_oauth_client_secret,
-    make_oauth_client_secret_key, make_token_key, store_oauth_client_secret, FileTokenStore,
-    InMemoryTokenStore, TokenStore, TokenStoreError,
+    create_token_store, delete_oauth_client_secret, get_oauth_client_secret, legacy_tokens_hint,
+    legacy_tokens_path, make_oauth_client_secret_key, make_token_key, migrate_legacy_tokens,
+    store_oauth_client_secret, InMemoryTokenStore, KeyringTokenStore, MigrationSummary, TokenStore,
+    TokenStoreError, KEYRING_SERVICE,
 };
 pub use token_type::{TokenType, TokenTypeError};
 pub use types::{Profile, ProfileError, ProfilesConfig};

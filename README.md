@@ -136,17 +136,19 @@ slack conv list | jq '.response.channels[].name'   # Default
 ### Profile Storage
 
 - `~/.config/slack-rs/profiles.json` — profile metadata (team, user, scopes)
-- `~/.local/share/slack-rs/tokens.json` — access tokens + secrets (0600 permissions)
+- OS keyring (service `slack`) — access tokens + OAuth client secrets
+  (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 
 Each profile stores independent OAuth config. See [docs/config-and-storage.md](docs/config-and-storage.md) for schema details.
 
-Note: keyring-only token storage (macOS Keychain / Linux secret-service) is
-planned; see [docs/roadmap.md](docs/roadmap.md).
+Upgrading from a version that used a plaintext `tokens.json`? Run
+`slack auth migrate` once to move tokens into the keyring (the file is
+securely deleted afterwards).
 
 ## Security
 
 - **Write protection**: Set `SLACKCLI_ALLOW_WRITE=false` to prevent accidental writes
-- **Tokens**: Stored in file-based storage (0600 permissions), never logged; keyring storage planned
+- **Tokens**: Stored exclusively in the OS keyring, never logged; no plaintext token files or env-var token auth
 - **Export/Import**: AES-256-GCM encryption with Argon2id key derivation
 - **Rate limiting**: Automatic retry with exponential backoff + jitter
 
