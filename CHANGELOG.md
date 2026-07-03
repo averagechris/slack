@@ -13,6 +13,9 @@ the fork will be v0.2.0.
 
 ## Unreleased
 
+
+## v0.2.0 - 2026-07-03
+
 ### Added
 
 - Nix flake with reproducible packaging, dev shell, CI apps (`ci-fmt`,
