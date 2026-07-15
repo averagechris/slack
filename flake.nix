@@ -23,6 +23,7 @@
         cliProgram = cliConfig.program_name;
         fleetApps = fleet.lib.fleet.presets.rust {
           inherit pkgs self;
+          srhtPackage = fleet.packages.${system}.srht;
           pname = "slack";
           binaries = ["slack"];
           subdir = "slack";
