@@ -32,7 +32,7 @@ tasks:
       export CACHIX_AUTH_TOKEN
       set -x
       nix build .#default --out-link result-pkg
-      nix path-info -S result-pkg
+      nix path-info -S ./result-pkg
       nix run --inputs-from . nixpkgs#cachix -- push averagechris-dotfiles result-release-artifact result-pkg
   - upload-and-refresh: |
       set -eu
