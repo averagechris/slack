@@ -5,6 +5,10 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     fleet.url = "git+https://git.sr.ht/~averagechris/averagechris.srht.site";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -12,10 +16,14 @@
     nixpkgs,
     flake-utils,
     fleet,
+    rust-overlay,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
-        pkgs = import nixpkgs {inherit system;};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [(import rust-overlay)];
+        };
         lib = pkgs.lib;
         cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
         cliConfig = fromTOML (builtins.readFile ./config/cli.toml);
@@ -508,6 +516,18 @@
               mainProgram = cliProgram;
             };
           });
+        msrv-rust = pkgs.rust-bin.stable."1.88.0".default;
+        ci-msrv = mkRepoScript {
+          name = "ci-msrv";
+          text = ''
+            rustc --version
+            cargo test --locked -- --test-threads=1
+          '';
+          runtimeInputs = with pkgs; [
+            msrv-rust
+            pkg-config
+          ];
+        };
         fetch-upstream = mkRepoScript {
           name = "fetch-upstream";
           text = fetchUpstreamScript;
@@ -605,6 +625,9 @@
             };
             publish-pages = flake-utils.lib.mkApp {
               drv = publish-pages;
+            };
+            ci-msrv = flake-utils.lib.mkApp {
+              drv = ci-msrv;
             };
           }
           // fleetApps.apps;

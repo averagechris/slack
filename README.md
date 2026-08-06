@@ -187,6 +187,7 @@ nix flake check        # build + fmt checks + release artifact
 nix run .#ci-fmt       # rustfmt + alejandra format check
 nix run .#ci-clippy    # clippy, warnings denied
 nix run .#ci-test      # cargo test --locked
+nix run .#ci-msrv      # single-threaded cargo test --locked on Rust 1.88 (MSRV)
 ```
 
 There is no hosted PR CI; validation is local via the commands above.
