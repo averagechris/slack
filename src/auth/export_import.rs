@@ -166,7 +166,7 @@ pub fn export_profiles(
 
     for (name, profile) in profiles_to_export {
         let bot_token_key = make_token_key(&profile.team_id, &profile.user_id);
-        let user_token_key = format!("{}:{}:user", &profile.team_id, &profile.user_id);
+        let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
 
         // Try to get bot token and user token
         let bot_token = token_store.get(&bot_token_key).ok();
@@ -392,10 +392,8 @@ pub fn import_profiles(
 
             // Store user token if present
             if let Some(user_token) = &export_profile.user_token {
-                let user_token_key = format!(
-                    "{}:{}:user",
-                    &export_profile.team_id, &export_profile.user_id
-                );
+                let user_token_key =
+                    format!("{}:{}:user", export_profile.team_id, export_profile.user_id);
                 token_store.set(&user_token_key, user_token)?;
             }
 

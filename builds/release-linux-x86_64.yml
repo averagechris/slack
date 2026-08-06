@@ -78,5 +78,5 @@ tasks:
       EOF
       srht builds submit "$manifest" --secrets --note "site refresh: slack $tag"
 artifacts:
-  - artifacts/slack-v0.3.0-x86_64-linux.tar.gz
-  - artifacts/slack-v0.3.0-x86_64-linux.tar.gz.sha256
+  - artifacts/slack-v0.3.1-x86_64-linux.tar.gz
+  - artifacts/slack-v0.3.1-x86_64-linux.tar.gz.sha256

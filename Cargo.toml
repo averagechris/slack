@@ -1,6 +1,6 @@
 [package]
 name = "slack"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 default-run = "slack"
 authors = ["Chris <chris@thesogu.com>"]
@@ -24,11 +24,11 @@ path = "src/lib.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-directories = "5.0"
+directories = "6.0"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "query", "rustls"] }
+base64 = "0.23"
 sha2 = "0.10"
 rand = "0.8"
 url = "2.5"
@@ -57,7 +57,7 @@ features = [
 tempfile = "3.14"
 wiremock = "0.6"
 httpmock = "0.8"
-serial_test = "3.0"
+serial_test = "4.0"
 
 [profile.release]
 lto = "fat"

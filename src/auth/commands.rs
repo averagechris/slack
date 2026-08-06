@@ -749,7 +749,7 @@ fn status_report(profile_name: Option<String>) -> Result<String, String> {
     // Check if tokens exist
     let token_store = create_token_store().map_err(|e| e.to_string())?;
     let bot_token_key = make_token_key(&profile.team_id, &profile.user_id);
-    let user_token_key = format!("{}:{}:user", &profile.team_id, &profile.user_id);
+    let user_token_key = format!("{}:{}:user", profile.team_id, profile.user_id);
 
     let has_bot_token = token_store.exists(&bot_token_key);
     let has_user_token = token_store.exists(&user_token_key);

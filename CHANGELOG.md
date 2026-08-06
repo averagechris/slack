@@ -13,6 +13,17 @@ the fork will be v0.2.0.
 
 ## Unreleased
 
+## v0.3.1 - 2026-08-06
+
+### Changed
+
+- Updated Rust dependencies and Nix inputs to current compatible releases,
+  including reqwest 0.13 with its rustls backend.
+- Raised the documented minimum supported Rust version to 1.88.
+
+### Fixed
+
+- Updated formatting calls for compatibility with the current Clippy release.
 
 ## v0.3.0 - 2026-07-03
 

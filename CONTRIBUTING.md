@@ -8,7 +8,7 @@ backlog live in [docs/roadmap.md](docs/roadmap.md).
 
 ## Development Setup
 
-- Rust 1.70+ — until `flake.nix` lands, run cargo via nix:
+- Rust 1.88+ — until `flake.nix` lands, run cargo via nix:
 
   ```bash
   nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#clippy nixpkgs#rustfmt --command cargo <args>
