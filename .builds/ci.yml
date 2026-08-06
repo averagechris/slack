@@ -1,0 +1,34 @@
+image: nixos/unstable
+arch: x86_64
+# Keep the manifest lean: the Nix flake supplies the Rust toolchains and tools.
+secrets:
+  - 5ec60320-e0d8-4ebe-8b45-1d10cc4d2cb2 # cachix averagechris-dotfiles -> ~/.ci_secrets/cachix_token
+environment:
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes
+    extra-substituters = https://averagechris-dotfiles.cachix.org
+    extra-trusted-public-keys = averagechris-dotfiles.cachix.org-1:VwJkl5dG1+xGDY5x884mH/kVwwpgwBAdBKIF3BZiia4=
+sources:
+  - https://git.sr.ht/~averagechris/slack
+tasks:
+  - fmt: |
+      cd slack
+      nix run .#ci-fmt
+  - clippy: |
+      cd slack
+      nix run .#ci-clippy
+  - test: |
+      cd slack
+      nix run .#ci-test
+  - msrv: |
+      cd slack
+      nix run .#ci-msrv
+  - package: |
+      cd slack
+      nix build .#slack --out-link result-slack --print-build-logs
+  - cache-warm: |
+      cd slack
+      if [ ! -f ~/.ci_secrets/cachix_token ]; then echo "no cachix token available; skipping cache warm"; exit 0; fi
+      [ -e ./result-slack ] || { echo "package result missing; skipping cache warm"; exit 0; }
+      CACHIX_AUTH_TOKEN="$(cat ~/.ci_secrets/cachix_token)"; export CACHIX_AUTH_TOKEN
+      nix run --inputs-from . nixpkgs#cachix -- push averagechris-dotfiles ./result-slack
