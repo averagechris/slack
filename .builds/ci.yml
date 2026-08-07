@@ -4,6 +4,8 @@ arch: x86_64
 secrets:
   - 5ec60320-e0d8-4ebe-8b45-1d10cc4d2cb2 # cachix averagechris-dotfiles -> ~/.ci_secrets/cachix_token
 environment:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   NIX_CONFIG: |
     experimental-features = nix-command flakes
     extra-substituters = https://averagechris-dotfiles.cachix.org
@@ -13,18 +15,32 @@ sources:
 tasks:
   - fmt: |
       cd slack
-      nix develop --command nix run .#ci-fmt
+      nix run .#ci-fmt
   - clippy: |
       cd slack
-      nix develop --command nix run .#ci-clippy
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+        export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
+        nix run .#ci-clippy
+      '
   - test: |
       cd slack
-      nix develop --command nix run .#ci-test
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+        export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
+        nix run .#ci-test
+      '
   - msrv: |
       cd slack
-      nix develop --command nix run .#ci-msrv
+      rm -rf target
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+        export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
+        nix run .#ci-msrv
+      '
   - package: |
+      set -eu
       cd slack
+      rm -rf target ~/.cargo
+      nix store gc
+      df -h /
       nix build .#slack --out-link result-slack --print-build-logs
   - cache-warm: |
       cd slack
