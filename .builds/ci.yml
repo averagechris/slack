@@ -13,16 +13,16 @@ sources:
 tasks:
   - fmt: |
       cd slack
-      nix run .#ci-fmt
+      nix develop --command nix run .#ci-fmt
   - clippy: |
       cd slack
-      nix run .#ci-clippy
+      nix develop --command nix run .#ci-clippy
   - test: |
       cd slack
-      nix run .#ci-test
+      nix develop --command nix run .#ci-test
   - msrv: |
       cd slack
-      nix run .#ci-msrv
+      nix develop --command nix run .#ci-msrv
   - package: |
       cd slack
       nix build .#slack --out-link result-slack --print-build-logs
