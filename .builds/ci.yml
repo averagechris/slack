@@ -18,20 +18,23 @@ tasks:
       nix run .#ci-fmt
   - clippy: |
       cd slack
-      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib nixpkgs#stdenv.cc nixpkgs#libiconv --command sh -c '
+        export LIBRARY_PATH="$(nix eval --raw --inputs-from . nixpkgs#libiconv)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
         export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
         nix run .#ci-clippy
       '
   - test: |
       cd slack
-      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib nixpkgs#stdenv.cc nixpkgs#libiconv --command sh -c '
+        export LIBRARY_PATH="$(nix eval --raw --inputs-from . nixpkgs#libiconv)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
         export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
         nix run .#ci-test
       '
   - msrv: |
       cd slack
       rm -rf target
-      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib --command sh -c '
+      nix shell --inputs-from . nixpkgs#pkg-config nixpkgs#dbus.dev nixpkgs#dbus.lib nixpkgs#stdenv.cc nixpkgs#libiconv --command sh -c '
+        export LIBRARY_PATH="$(nix eval --raw --inputs-from . nixpkgs#libiconv)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
         export PKG_CONFIG_PATH="$(nix eval --raw --inputs-from . nixpkgs#dbus.dev.outPath)/lib/pkgconfig"
         nix run .#ci-msrv
       '
