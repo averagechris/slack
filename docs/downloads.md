@@ -56,7 +56,10 @@ The successful job still exposes the Linux tarball and checksum as build
 artifacts, but the durable download URLs are the copies published to
 SourceHut Pages.
 
-## Build and publish pages
+## Recovery-only pages tools
+
+The routine release command builds and refreshes Pages. Use these lower-level
+commands only for recovery after inspecting the release state and their help:
 
 ```bash
 nix run .#build-pages
@@ -90,8 +93,13 @@ The generated pages archive is `dist/pages/slack-pages.tar.gz` and contains
 The `release` flake app runs the whole pipeline:
 
 ```bash
-nix run .#release -- --version 0.2.0
+nix run .#release -- --version 0.2.0 --check
+nix run .#release -- --version 0.2.0 [--submit-linux-build]
 ```
+
+Tiny must run the non-mutating preflight first and proceed only when it
+succeeds. If publication is interrupted, rerun the exact same release command
+to resume; mismatched versions, tags, or `main` state fail closed.
 
 Steps, in order:
 
@@ -99,16 +107,16 @@ Steps, in order:
    rewrites the `builds/` manifest artifact filenames, and generates a
    CHANGELOG entry from conventional-commit summaries since the previous
    `vX.Y.Z` tag (using `jj log`).
-2. Validation — `nix flake check`, `nix run .#ci-test`,
-   `nix run .#ci-clippy` (skippable via `--skip-validate`).
+2. Validation — `nix flake check`, `nix run .#ci-test`, and
+   `nix run .#ci-clippy`.
 3. Tagging — `nix run .#release-tag` creates `vX.Y.Z` via `jj tag set`
    (git fallback in non-jj checkouts), refuses duplicate tags and empty
    revisions, pushes the tag to origin, then moves the `main` bookmark and
-   `jj git push`es it (skippable via `--skip-tag`).
+   `jj git push`es it.
 4. Local artifact — `nix build .#release-artifact` copied into
-   `dist/downloads/` (skippable via `--skip-artifact`).
-5. Pages — `nix run .#build-pages -- --include-existing-downloads`
-   (skippable via `--skip-pages`); publish with `--publish-pages`.
+   `dist/downloads/`.
+5. Pages — `nix run .#build-pages -- --include-existing-downloads`, followed
+   by publication.
 6. Linux build — pass `--submit-linux-build` to submit
    `builds/release-linux-x86_64.yml` with `hut builds submit`.
 

@@ -654,10 +654,12 @@
                 printf '%s\n' 'release help exposes an obsolete skip/page flag' >&2
                 exit 1
               fi
-              if grep -Eq -- '--(skip-(validate|tag|artifact|pages)|publish-pages)' ${./AGENTS.md}; then
-                printf '%s\n' 'AGENTS.md documents an obsolete skip/page flag' >&2
-                exit 1
-              fi
+              for doc in ${./AGENTS.md} ${./docs/downloads.md}; do
+                if grep -Eq -- '--(skip-(validate|tag|artifact|pages)|publish-pages)' "$doc"; then
+                  printf '%s\n' 'authoritative release docs contain an obsolete skip/page flag' >&2
+                  exit 1
+                fi
+              done
               touch "$out"
             '';
           "release-artifact" = fleetApps.releaseArtifact system;
