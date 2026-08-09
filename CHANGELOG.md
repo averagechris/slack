@@ -13,6 +13,10 @@ the fork will be v0.2.0.
 
 ## Unreleased
 
+### Changed
+
+- Adopt the fail-safe, resumable fleet release workflow.
+
 ## v0.3.1 - 2026-08-06
 
 ### Changed

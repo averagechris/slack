@@ -56,6 +56,31 @@ cargo clippy --all-targets -- -D warnings   # Lint, fail on warnings (CI standar
 Run `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`
 before landing any change.
 
+## Release flow
+
+- The routine release interface is exactly these two commands; Tiny should run
+  the readiness check first and proceed only when it succeeds:
+
+    nix run .#release -- --version X.Y.Z --check
+    nix run .#release -- --version X.Y.Z [--submit-linux-build]
+
+  The non-mutating check fails fast on a dirty, stale, or diverged checkout;
+  missing origin or SourceHut authentication; invalid or downgrade versions;
+  and local or remote tag conflicts. The release prepares the versioned tree,
+  validates that prepared tree with the preset fmt, clippy, and test gates,
+  then builds and verifies the artifact and checksum before atomically
+  publishing `main` and its annotated tag with a lease. Artifact uploads and
+  the downloads-site refresh are idempotent; requested Linux submission is as
+  well. After publication, rerun the exact same command to resume: only an
+  exact matching version, tag, and main state continues, while mismatches fail
+  closed. Successful publication leaves a new empty `@` above `main`.
+- `builds/release-linux-x86_64.yml` builds and uploads the Linux artifact and
+  requests the downloads-site refresh. Request it only through the routine
+  release command's optional argument.
+- `prepare-release`, `release-tag`, `build-pages`, and `publish-pages` are
+  lower-level recovery tools only. Do not compose them into the normal path;
+  inspect their help and release state before manual recovery.
+
 ## Project Structure
 
 ```
