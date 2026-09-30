@@ -3,7 +3,8 @@
 Slack CLI (Rust) — OAuth authentication, multi-profile, full Slack Web API access.
 
 Forked from [tumf/slack-rs](https://github.com/tumf/slack-rs) (MIT) at v0.1.71.
-Hosted at [git.sr.ht/~averagechris/slack](https://git.sr.ht/~averagechris/slack).
+Maintained at [github.com/averagechris/slack](https://github.com/averagechris/slack);
+the former SourceHut repository and releases are historical records.
 
 Designed following [Agentic CLI Design](https://dev.to/tumf/agentic-cli-design-7-principles-for-designing-cli-as-a-protocol-for-ai-agents-2c10) principles — structured JSON output, non-interactive operation, safe-by-default.
 
@@ -31,17 +32,17 @@ install -m 0755 slack-vX.Y.Z-<platform>/slack ~/.local/bin/slack
 
 ### Nix
 
-Run directly from the SourceHut flake, or install into your profile:
+Run directly from the GitHub flake, or install into your profile:
 
 ```bash
-nix run sourcehut:~averagechris/slack -- --help
-nix profile install sourcehut:~averagechris/slack
+nix run github:averagechris/slack -- --help
+nix profile install github:averagechris/slack
 ```
 
 ### From source
 
 ```bash
-git clone https://git.sr.ht/~averagechris/slack
+git clone https://github.com/averagechris/slack.git
 cd slack
 nix build            # or: cargo build --release
 ```
@@ -191,9 +192,17 @@ nix run .#ci-msrv      # single-threaded cargo test --locked on Rust 1.88 (MSRV)
 ```
 
 There is no hosted PR CI; validation is local via the commands above.
-Releases (reproducible tarballs, SourceHut Pages downloads site, jj tags,
-changelog generation) are driven by the `release` flake app — see
-[docs/downloads.md](docs/downloads.md) for the full release process.
+Future releases are prepared by the SHA-pinned Fleet GitHub backend:
+
+```console
+nix run .#release -- --version X.Y.Z --check
+nix run .#release -- --version X.Y.Z
+```
+
+The command atomically publishes `main` and an annotated tag. A read-only
+GitHub workflow builds macOS arm64 and Linux x86_64 artifacts; maintainers
+verify and publish the four release assets manually. Historical SourceHut
+downloads remain available. See [docs/release.md](docs/release.md).
 
 ## Contributing
 

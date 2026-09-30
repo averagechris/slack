@@ -6,8 +6,9 @@ and generic + wrapper Slack Web API access. Fork of
 
 ## Fork Policy
 
-- `origin` = SourceHut `git.sr.ht/~averagechris/slack` (canonical); GitHub
-  `tumf/slack-rs` is retained as the `upstream` remote.
+- `origin` = GitHub `averagechris/slack` (canonical); GitHub `tumf/slack-rs`
+  is retained as the read-only `upstream` remote. Historical SourceHut releases
+  remain preserved.
 - Review upstream changes (supply-chain focus) before porting anything.
   Never blind-merge upstream.
 - **Upstream reviewed through e6a7ba03 (v0.1.71) on 2026-07-02.** Future
@@ -62,24 +63,24 @@ before landing any change.
   the readiness check first and proceed only when it succeeds:
 
     nix run .#release -- --version X.Y.Z --check
-    nix run .#release -- --version X.Y.Z [--submit-linux-build]
+    nix run .#release -- --version X.Y.Z
 
   The non-mutating check fails fast on a dirty, stale, or diverged checkout;
-  missing origin or SourceHut authentication; invalid or downgrade versions;
-  and local or remote tag conflicts. The release prepares the versioned tree,
+  a missing or unexpected GitHub origin; invalid or downgrade versions; and
+  local or remote tag conflicts. The release prepares the versioned tree,
   validates that prepared tree with the preset fmt, clippy, and test gates,
   then builds and verifies the artifact and checksum before atomically
-  publishing `main` and its annotated tag with a lease. Artifact uploads and
-  the downloads-site refresh are idempotent; requested Linux submission is as
-  well. After publication, rerun the exact same command to resume: only an
+  publishing `main` and its annotated tag with a lease. The read-only GitHub
+  workflow builds the two supported platform artifacts; a maintainer verifies
+  and publishes them manually. After publication, rerun the exact same command to resume: only an
   exact matching version, tag, and main state continues, while mismatches fail
   closed. Successful publication leaves a new empty `@` above `main`.
-- `builds/release-linux-x86_64.yml` builds and uploads the Linux artifact and
-  requests the downloads-site refresh. Request it only through the routine
-  release command's optional argument.
-- `prepare-release`, `release-tag`, `build-pages`, and `publish-pages` are
-  lower-level recovery tools only. Do not compose them into the normal path;
-  inspect their help and release state before manual recovery.
+- `builds/release-linux-x86_64.yml` and the local Pages apps are archival.
+  Never use them for a future release. Follow `docs/release.md` to publish the
+  four verified GitHub assets and dispatch the downloads site.
+- `prepare-release` and `release-tag` are lower-level recovery tools only.
+  `build-pages` and `publish-pages` are preserved solely for historical
+  SourceHut archaeology. Do not compose any of them into the normal path.
 
 ## Project Structure
 
@@ -126,7 +127,7 @@ docs/                 # roadmap.md (tracker), fork-audit.md (read-only), guides
 
 | Do not do this | Why / corrected behavior |
 | --- | --- |
-| Reintroduce GitHub Actions, codecov, Homebrew formulae, or crates.io release plumbing | This fork is Nix-native (R2) with no hosted PR CI (D7). Validation is local: `nix flake check` + `ci-*` flake apps once `flake.nix` lands; SourceHut builds for releases only. |
+| Add hosted PR CI, automated release publishing, codecov, Homebrew formulae, or crates.io release plumbing | This fork is Nix-native (R2) with local PR validation. The sole GitHub workflow is a read-only, tag-triggered release artifact builder; publication remains manual. |
 | Reintroduce env-var token auth (`SLACK_TOKEN`) or plaintext token storage | R1: secure by default. Encrypted export/import is the migration path between machines. |
 | Reintroduce the `--client-secret` raw CLI flag | Removed per audit S6 — secrets land in shell history/process lists. Secrets come only from env var (`SLACKRS_CLIENT_SECRET` / `--client-secret-env`), file (`--client-secret-file`), or interactive prompt. |
 | Reintroduce ngrok tunnel support or the `demo` command | Dropped per D4 as dead code. Cloudflared tunnel login stays. |

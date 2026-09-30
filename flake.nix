@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    fleet.url = "git+https://git.sr.ht/~averagechris/averagechris.srht.site";
+    fleet.url = "github:averagechris/fleet/aa056e3eca4324b49a1eadc63da35884f966cb21";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -39,6 +39,12 @@
           versionMode = "package";
           versionFile = "Cargo.toml";
           lockPackages = ["slack"];
+          releaseBackend = "github";
+          releaseValidationApps = ["release-contract"];
+          ciExtraInputs = lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+            dbus
+            pkg-config
+          ]);
         };
         # Map Cargo SPDX-ish license strings to nixpkgs license attrs.
         licenseFor = licenseString:
@@ -639,23 +645,21 @@
             pkgs.runCommand "slack-release-contract" {
               nativeBuildInputs = [pkgs.gnugrep];
             } ''
-              help="$(${fleetApps.apps.release.program} --help)"
-              printf '%s\n' "$help" | grep -Fqx \
-                'usage: release --version X.Y.Z [--check] [--allow-downgrade] [--submit-linux-build]'
-              printf '%s\n' "$help" | grep -Fq -- \
-                '--check               verify release readiness without editing files or publishing refs'
-              printf '%s\n' "$help" | grep -Fq -- \
-                '--submit-linux-build  submit the Linux release build after publication'
+               help="$(${fleetApps.apps.release.program} --help)"
+               printf '%s\n' "$help" | grep -Fq -- \
+                 'usage: release --version X.Y.Z [--check] [--allow-downgrade]'
+               printf '%s\n' "$help" | grep -Fq -- \
+                 '--check  nonmutating ref/version preflight only; does not run validation or build artifacts'
 
-              grep -Fqx '    nix run .#release -- --version X.Y.Z --check' ${./AGENTS.md}
-              grep -Fqx '    nix run .#release -- --version X.Y.Z [--submit-linux-build]' ${./AGENTS.md}
+               grep -Fqx '    nix run .#release -- --version X.Y.Z --check' ${./AGENTS.md}
+               grep -Fqx '    nix run .#release -- --version X.Y.Z' ${./AGENTS.md}
 
-              if printf '%s\n' "$help" | grep -Eq -- '--(skip-(validate|tag|artifact|pages)|publish-pages)'; then
+               if printf '%s\n' "$help" | grep -Eq -- '--(submit-linux-build|skip-(validate|tag|artifact|pages)|publish-pages)'; then
                 printf '%s\n' 'release help exposes an obsolete skip/page flag' >&2
                 exit 1
               fi
-              for doc in ${./AGENTS.md} ${./docs/downloads.md}; do
-                if grep -Eq -- '--(skip-(validate|tag|artifact|pages)|publish-pages)' "$doc"; then
+               for doc in ${./README.md} ${./AGENTS.md} ${./docs/release.md} ${./docs/downloads.md}; do
+                 if grep -Eq -- '--(submit-linux-build|skip-(validate|tag|artifact|pages)|publish-pages)|hut builds submit|nix run \.#(build-pages|publish-pages)' "$doc"; then
                   printf '%s\n' 'authoritative release docs contain an obsolete skip/page flag' >&2
                   exit 1
                 fi
