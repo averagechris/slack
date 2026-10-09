@@ -11,8 +11,9 @@ and generic + wrapper Slack Web API access. Fork of
   remain preserved.
 - Review upstream changes (supply-chain focus) before porting anything.
   Never blind-merge upstream.
-- **Upstream reviewed through e6a7ba03 (v0.1.71) on 2026-07-02.** Future
+- **Upstream reviewed through e6a7ba038ef6d81e3569f2d509d3a083fec90e74 (v0.1.71) on 2026-10-09.** Future
   upstream review should start after that commit.
+  The latest review found no new upstream commits; see `docs/upstream-review.md`.
 - Requirements, decisions, and the living backlog are in `docs/roadmap.md`.
   The audit that motivated the fork is `docs/fork-audit.md` (do not edit it).
 
